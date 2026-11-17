@@ -31,7 +31,7 @@ jobs:
       # NODE_ENV/EAS_BUILD_PROFILE 를 production 으로 두지 않는다:
       # 무료 Apple ID 는 increased-memory-limit 등 엔타이틀먼트를 쓸 수 없다.
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Select newest Xcode
         run: |
@@ -40,7 +40,7 @@ jobs:
           sudo xcode-select -s "$XCODE/Contents/Developer"
           xcodebuild -version
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v6
         with:
           node-version: 22
           cache: npm
@@ -90,13 +90,13 @@ jobs:
           (cd dist && zip -qry GemmaChat-unsigned.ipa Payload)
           ls -lh dist/GemmaChat-unsigned.ipa
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v6
         with:
           name: GemmaChat-unsigned-ipa
           path: dist/GemmaChat-unsigned.ipa
           retention-days: 30
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v6
         if: failure()
         with:
           name: build-log
