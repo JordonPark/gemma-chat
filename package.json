@@ -4,9 +4,16 @@
   "main": "index.ts",
   "dependencies": {
     "expo": "~58.0.25",
+    "expo-build-properties": "~58.0.12",
+    "expo-file-system": "~58.0.13",
+    "expo-keep-awake": "~58.0.4",
     "expo-status-bar": "~58.0.5",
+    "expo-system-ui": "~58.0.7",
+    "llama.rn": "0.13.0-rc.11",
     "react": "19.3.0",
-    "react-native": "0.88.1"
+    "react-native": "0.88.1",
+    "react-native-safe-area-context": "~5.11.1",
+    "react-native-zip-archive": "9.5.3"
   },
   "devDependencies": {
     "@types/react": "~19.3.0",
@@ -14,9 +21,12 @@
   },
   "scripts": {
     "start": "expo start",
-    "android": "expo start --android",
-    "ios": "expo start --ios",
-    "web": "expo start --web"
+    "android": "APP_VARIANT=development expo run:android",
+    "ios": "APP_VARIANT=development expo run:ios",
+    "android:release": "expo run:android --variant release",
+    "ios:release": "NODE_ENV=production expo run:ios --configuration Release",
+    "typecheck": "tsc --noEmit",
+    "pack-model": "bash tools/pack_model.sh"
   },
   "private": true
 }
