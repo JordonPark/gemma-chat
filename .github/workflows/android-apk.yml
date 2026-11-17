@@ -22,7 +22,7 @@ on:
       - '.github/workflows/android-apk.yml'
 
 concurrency:
-  group: android-apk-${{ github.ref }}
+  group: android-apk-fast-${{ github.ref }}
   cancel-in-progress: true
 
 permissions:
@@ -34,6 +34,11 @@ jobs:
     timeout-minutes: 90
     env:
       CI: '1'
+      CMAKE_C_COMPILER_LAUNCHER: ccache
+      CMAKE_CXX_COMPILER_LAUNCHER: ccache
+      # llama.rn 은 CPU 종류별 JNI 래퍼를 7개 컴파일한다. 실제로 쓰이는 4개만 남긴다.
+      # (뺀 v8 / v8_2 / v8_2_i8mm 기기는 기본 rnllama_jni 로 동작)
+      RNLLAMA_VARIANTS: rnllama,rnllama_v8_2_dotprod,rnllama_v8_2_dotprod_i8mm,rnllama_v8_2_dotprod_i8mm_hexagon_opencl
     steps:
       - uses: actions/checkout@v6
 
@@ -41,6 +46,15 @@ jobs:
         with:
           distribution: temurin
           java-version: '17'
+
+      # Gradle 의존성·빌드 결과 캐시 (2번째 빌드부터 크게 빨라짐)
+      - uses: gradle/actions/setup-gradle@v6
+
+      # C++ 컴파일 캐시 (llama.rn JSI 래퍼, React Native 네이티브 코드)
+      - uses: hendrikmuhs/ccache-action@v1.2.25
+        with:
+          key: android-arm64
+          max-size: 2G
 
       - uses: actions/setup-node@v6
         with:
@@ -58,11 +72,14 @@ jobs:
 
       - name: Build release APK
         working-directory: android
+        # 로그를 실시간으로 보여 준다 (Actions 페이지에서 진행 상황 확인 가능)
         run: |
-          ./gradlew assembleRelease --no-daemon -Dorg.gradle.jvmargs="-Xmx6g -XX:MaxMetaspaceSize=1g" \
-            > ../gradle.log 2>&1 && rc=0 || rc=$?
-          grep -E "BUILD (SUCCESSFUL|FAILED)|^\* What went wrong" -A4 ../gradle.log | tail -40 || true
-          exit $rc
+          set -o pipefail
+          ./gradlew assembleRelease --console=plain --parallel --build-cache \
+            -PrnllamaVariants="$RNLLAMA_VARIANTS" \
+            -Dorg.gradle.jvmargs="-Xmx6g -XX:MaxMetaspaceSize=1g" \
+            2>&1 | tee ../gradle.log
+          ccache -s || true
 
       - name: Report build errors
         if: failure()
