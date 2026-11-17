@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useState } from 'react';
-import { ActivityIndicator, Alert, Pressable, StyleSheet, Text, View } from 'react-native';
+import { Alert, Pressable, StyleSheet, Text, View } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 import { ChatScreen } from './src/ChatScreen';
+import { LoadingScreen } from './src/LoadingScreen';
 import { SetupScreen } from './src/SetupScreen';
 import { loadModel, unloadModel, type Settings } from './src/llm';
 import { deleteInstalledModels, findInstalledModel, type InstalledModel } from './src/modelStore';
@@ -56,7 +57,7 @@ export default function App() {
   let body: React.ReactNode;
   switch (phase.kind) {
     case 'scanning':
-      body = <Center><ActivityIndicator color={colors.accent} /></Center>;
+      body = <LoadingScreen status="준비 중" />;
       break;
     case 'setup':
       body = (
@@ -66,13 +67,7 @@ export default function App() {
       );
       break;
     case 'loading':
-      body = (
-        <Center>
-          <ActivityIndicator size="large" color={colors.accent} />
-          <Text style={styles.text}>모델 로딩 중… {Math.round(phase.pct)}%</Text>
-          <Text style={styles.muted}>{phase.model.name}</Text>
-        </Center>
-      );
+      body = <LoadingScreen pct={phase.pct} status="모델 불러오는 중" detail={phase.model.name} />;
       break;
     case 'error':
       body = (
