@@ -159,6 +159,22 @@ Mac이 없으면 GitHub Actions의 macOS 서버가 **서명 없는 .ipa**를 빌
 npx eas-cli@latest build -p android --profile production
 ```
 
+## 3-1. OTA 업데이트 (앱을 다시 설치하지 않고 업데이트)
+
+화면·로직(JS) 변경은 `.ipa`/`.apk`를 다시 설치하지 않아도 됩니다. 앱이 Wi-Fi에서 켜질 때 업데이트를 받아 두고, 화면 위 **"다시 시작"**을 누르거나 다음에 앱을 열 때 적용합니다(expo-updates + EAS Update). 설정 › **업데이트 확인**으로 직접 확인할 수도 있습니다.
+
+준비 (한 번):
+1. https://expo.dev 에 가입하고 *Projects › Create a project*에서 이름을 **`gemma-chat`**으로 만듭니다. slug가 다르면 배포가 실패합니다.
+2. 프로젝트 ID(UUID)를 저장소 *Settings › Secrets and variables › Actions › **Variables***에 `EXPO_PROJECT_ID`로 등록합니다.
+3. expo.dev *Account settings › Access tokens*에서 토큰을 만들어 ***Secrets***에 `EXPO_TOKEN`으로 등록합니다.
+4. *Actions*에서 **iOS unsigned IPA**와 **Android APK**를 *Run workflow*로 다시 실행하고, 이 빌드를 **마지막으로 한 번** 설치합니다(OTA가 켜진 빌드).
+
+그 뒤로는 `main`에 JS 변경을 push하면 *OTA update* 워크플로우가 업데이트를 배포합니다.
+
+- **OTA로 안 되는 것:** 네이티브 변경(라이브러리 추가, 권한, `app.config.ts` 설정)은 `app.config.ts`의 `version`을 올리고 앱을 새로 빌드·설치해야 합니다. 버전이 다른 앱에는 업데이트가 가지 않습니다.
+- **iOS 무료 Apple ID:** OTA와 별개로 7일마다 다시 서명해야 합니다(Sideloadly 재설치 또는 자동 갱신).
+- **네트워크:** 업데이트 확인은 Wi-Fi에서만 하고, Expo 서버(u.expo.dev)에 접속합니다. `OFFLINE_ONLY=1` 빌드에서는 꺼집니다.
+
 ## 4. 오프라인 동작 확인
 
 - 네트워크를 쓰는 코드는 `src/modelDownload.ts`(모델 다운로드) 하나뿐이고, 모델이 설치된 뒤에는 호출되지 않습니다. 모델 설치 후 비행기 모드에서 채팅이 그대로 동작해야 합니다.
@@ -175,6 +191,8 @@ src/llm.ts              llama.rn 래퍼: 로드, Gemma 채팅 템플릿(jinja), 
 src/ChatScreen.tsx      채팅 UI, 생성 중지, 설정(시스템 프롬프트, n_ctx, 토큰 수, temperature, GPU)
 src/SetupScreen.tsx     모델 가져오기 UI와 진행률
 src/storage.ts          설정과 대화를 기기 안 JSON 파일로 저장
+src/Markdown.tsx        답변 Markdown 렌더링 (의존성 없음)
+src/UpdateBanner.tsx    OTA 업데이트 배너·확인
 tools/pack_model.sh     PC: HF git 저장소에서 받아 분할
 tools/split_model.py    분할 + SHA256SUMS + manifest.json
 .github/workflows/      publish-model.yml(모델 → Release), ios-unsigned.yml(서명 없는 .ipa)

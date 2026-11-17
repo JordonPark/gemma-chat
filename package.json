@@ -10,6 +10,7 @@
     "expo-network": "~58.0.5",
     "expo-status-bar": "~58.0.5",
     "expo-system-ui": "~58.0.7",
+    "expo-updates": "~58.0.22",
     "llama.rn": "0.13.0-rc.11",
     "react": "19.3.0",
     "react-native": "0.88.1",

@@ -1,0 +1,66 @@
+# JS(화면·로직) 변경을 OTA 업데이트로 배포 (EAS Update, channel: production)
+# 앱은 Wi-Fi 에서 켜질 때 받아 두었다가 "다시 시작" 또는 다음 실행 때 적용한다.
+#
+# 준비 (한 번):
+#   1) expo.dev 가입 → Projects › Create project, 이름(slug) 은 반드시 gemma-chat
+#   2) 프로젝트 ID 를 저장소 Settings › Secrets and variables › Actions › Variables 에
+#      EXPO_PROJECT_ID 로 등록
+#   3) expo.dev › Account settings › Access tokens 에서 토큰 생성 → Secrets 에 EXPO_TOKEN 으로 등록
+#   4) OTA 가 켜진 앱을 한 번 새로 설치 (iOS unsigned IPA / Android APK 워크플로우 결과)
+#
+# 네이티브 변경(라이브러리 추가, 권한, app.config.ts 설정)은 OTA 로 안 된다.
+# 그때는 app.config.ts 의 version 을 올리고 앱을 새로 빌드·설치한다.
+name: OTA update
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'App.tsx'
+      - 'index.ts'
+      - 'src/**'
+      - 'assets/**'
+
+concurrency:
+  group: ota-update-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      EXPO_PROJECT_ID: ${{ vars.EXPO_PROJECT_ID }}
+      EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+    steps:
+      - name: Check configuration
+        id: cfg
+        run: |
+          if [ -z "$EXPO_PROJECT_ID" ] || [ -z "$EXPO_TOKEN" ]; then
+            echo "::notice::EXPO_PROJECT_ID(Variables) 또는 EXPO_TOKEN(Secrets) 이 없어 OTA 배포를 건너뜁니다."
+            echo "skip=1" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/checkout@v6
+        if: steps.cfg.outputs.skip != '1'
+
+      - uses: actions/setup-node@v6
+        if: steps.cfg.outputs.skip != '1'
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install
+        if: steps.cfg.outputs.skip != '1'
+        run: npm ci
+
+      - name: Typecheck
+        if: steps.cfg.outputs.skip != '1'
+        run: npx tsc --noEmit
+
+      - name: Publish update (iOS + Android)
+        if: steps.cfg.outputs.skip != '1'
+        run: |
+          MSG="$(git log -1 --format=%s) (${GITHUB_SHA::7})"
+          npx --yes eas-cli@latest update --channel production --message "$MSG" --non-interactive

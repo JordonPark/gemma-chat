@@ -25,6 +25,7 @@ import {
 } from './llm';
 import { formatBytes, type InstalledModel } from './modelStore';
 import { Markdown } from './Markdown';
+import { UpdateBanner, checkForUpdateInteractive, describeAppVersion } from './UpdateBanner';
 import { loadChat, saveChat } from './storage';
 import { colors } from './theme';
 
@@ -103,6 +104,8 @@ export function ChatScreen({ model, settings, gpuInfo, onChangeSettings, onRemov
           <Text style={styles.hBtnText}>설정</Text>
         </Pressable>
       </View>
+
+      <UpdateBanner busy={busy} />
 
       <FlatList
         ref={listRef}
@@ -242,6 +245,12 @@ function SettingsModal({
             <Text style={styles.sendText}>저장</Text>
           </Pressable>
         </View>
+
+        <Text style={[styles.label, { marginTop: 24 }]}>앱 버전</Text>
+        <Text style={styles.hint}>{describeAppVersion()}</Text>
+        <Pressable style={[styles.send, { backgroundColor: colors.border, marginTop: 8 }]} onPress={checkForUpdateInteractive}>
+          <Text style={[styles.sendText, { color: colors.text }]}>업데이트 확인</Text>
+        </Pressable>
 
         <Text style={[styles.label, { marginTop: 24 }]}>모델</Text>
         <Text style={styles.hint}>
