@@ -24,6 +24,7 @@ export function LoadingScreen({ pct, status, detail }: Props) {
   const pulse = useRef(new Animated.Value(0)).current;
   const sweep = useRef(new Animated.Value(0)).current;
   const fade = useRef(new Animated.Value(0)).current;
+  const fillAnim = useRef(new Animated.Value(0)).current;
   const tip = TIPS[Math.floor(Date.now() / 4000) % TIPS.length];
 
   useEffect(() => {
@@ -44,6 +45,18 @@ export function LoadingScreen({ pct, status, detail }: Props) {
       s.stop();
     };
   }, [fade, pulse, sweep]);
+
+  // 진행률이 툭툭 끊기지 않고 부드럽게 차오르도록
+  useEffect(() => {
+    if (typeof pct !== 'number') return;
+    Animated.timing(fillAnim, {
+      toValue: Math.min(100, Math.max(2, pct)),
+      duration: 350,
+      easing: Easing.out(Easing.cubic),
+      useNativeDriver: false,
+    }).start();
+  }, [pct, fillAnim]);
+  const fillWidth = fillAnim.interpolate({ inputRange: [0, 100], outputRange: ['0%', '100%'] });
 
   const scale = pulse.interpolate({ inputRange: [0, 1], outputRange: [1, 1.06] });
   const glow = pulse.interpolate({ inputRange: [0, 1], outputRange: [0.25, 0.55] });
@@ -66,7 +79,7 @@ export function LoadingScreen({ pct, status, detail }: Props) {
         <View style={styles.progressBlock}>
           <View style={styles.track}>
             {known ? (
-              <View style={[styles.fill, { width: `${Math.min(100, Math.max(2, pct!))}%` }]} />
+              <Animated.View style={[styles.fill, { width: fillWidth }]} />
             ) : (
               <Animated.View style={[styles.sweep, { transform: [{ translateX: sweepX }] }]} />
             )}

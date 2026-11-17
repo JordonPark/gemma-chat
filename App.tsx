@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Alert, Pressable, StyleSheet, Text, View } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
@@ -17,26 +17,48 @@ type Phase =
   | { kind: 'ready'; model: InstalledModel; gpuInfo: string }
   | { kind: 'error'; model: InstalledModel; message: string };
 
+// 첫 실행 때 로딩 화면을 최소 이만큼은 보여 준다 (모델이 빨리 올라와도 화면이 깜빡이고 지나가지 않게)
+const MIN_SPLASH_MS = 2500;
+
 export default function App() {
   const [settings, setSettings] = useState<Settings>(() => loadSettings());
   const [phase, setPhase] = useState<Phase>({ kind: 'scanning' });
+  const launchAt = useRef(Date.now());
+  const firstLaunch = useRef(true);
 
-  const startModel = useCallback(async (model: InstalledModel, s: Settings) => {
-    setPhase({ kind: 'loading', model, pct: 0 });
-    try {
-      const r = await loadModel(model.path, s, (pct) => setPhase({ kind: 'loading', model, pct }));
-      const gpuInfo = r.gpu ? 'GPU' : s.useGpu ? `CPU (GPU 불가: ${r.reasonNoGPU || '미지원'})` : 'CPU';
-      setPhase({ kind: 'ready', model, gpuInfo });
-    } catch (e: any) {
-      setPhase({ kind: 'error', model, message: String(e?.message ?? e) });
-    }
+  /** 첫 실행이면 로딩 화면이 MIN_SPLASH_MS 동안 보이도록 남은 시간만큼 기다린다 */
+  const holdSplash = useCallback(async () => {
+    if (!firstLaunch.current) return;
+    firstLaunch.current = false;
+    const wait = MIN_SPLASH_MS - (Date.now() - launchAt.current);
+    if (wait > 0) await new Promise((r) => setTimeout(r, wait));
   }, []);
+
+  const startModel = useCallback(
+    async (model: InstalledModel, s: Settings) => {
+      setPhase({ kind: 'loading', model, pct: 0 });
+      try {
+        const r = await loadModel(model.path, s, (pct) => setPhase({ kind: 'loading', model, pct }));
+        const gpuInfo = r.gpu ? 'GPU' : s.useGpu ? `CPU (GPU 불가: ${r.reasonNoGPU || '미지원'})` : 'CPU';
+        setPhase({ kind: 'loading', model, pct: 100 });
+        await holdSplash();
+        setPhase({ kind: 'ready', model, gpuInfo });
+      } catch (e: any) {
+        firstLaunch.current = false;
+        setPhase({ kind: 'error', model, message: String(e?.message ?? e) });
+      }
+    },
+    [holdSplash],
+  );
 
   useEffect(() => {
     (async () => {
       const m = await findInstalledModel();
       if (m) startModel(m, settings);
-      else setPhase({ kind: 'setup' });
+      else {
+        await holdSplash();
+        setPhase({ kind: 'setup' });
+      }
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -67,7 +89,13 @@ export default function App() {
       );
       break;
     case 'loading':
-      body = <LoadingScreen pct={phase.pct} status="모델 불러오는 중" detail={phase.model.name} />;
+      body = (
+        <LoadingScreen
+          pct={phase.pct}
+          status={phase.pct >= 100 ? '준비 완료' : '모델 불러오는 중'}
+          detail={phase.model.name}
+        />
+      );
       break;
     case 'error':
       body = (
