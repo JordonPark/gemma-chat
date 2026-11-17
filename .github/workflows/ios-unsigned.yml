@@ -30,6 +30,7 @@ jobs:
       CI: '1'
       # 저장소 Settings › Variables 의 EXPO_PROJECT_ID 가 있으면 OTA 업데이트가 켜진 앱을 빌드한다
       EXPO_PROJECT_ID: ${{ vars.EXPO_PROJECT_ID }}
+      EXPO_OWNER: ${{ vars.EXPO_OWNER }}
       # NODE_ENV/EAS_BUILD_PROFILE 를 production 으로 두지 않는다:
       # 무료 Apple ID 는 increased-memory-limit 등 엔타이틀먼트를 쓸 수 없다.
     steps:

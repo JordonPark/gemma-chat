@@ -5,6 +5,7 @@
 #   1) expo.dev 가입 → Projects › Create project, 이름(slug) 은 반드시 gemma-chat
 #   2) 프로젝트 ID 를 저장소 Settings › Secrets and variables › Actions › Variables 에
 #      EXPO_PROJECT_ID 로 등록
+#      팀(조직) 계정 아래 프로젝트면 그 계정 이름을 Variables 에 EXPO_OWNER 로 등록
 #   3) expo.dev › Account settings › Access tokens 에서 토큰 생성 → Secrets 에 EXPO_TOKEN 으로 등록
 #   4) OTA 가 켜진 앱을 한 번 새로 설치 (iOS unsigned IPA / Android APK 워크플로우 결과)
 #
@@ -32,6 +33,7 @@ jobs:
     timeout-minutes: 30
     env:
       EXPO_PROJECT_ID: ${{ vars.EXPO_PROJECT_ID }}
+      EXPO_OWNER: ${{ vars.EXPO_OWNER }}
       EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
     steps:
       - name: Check configuration

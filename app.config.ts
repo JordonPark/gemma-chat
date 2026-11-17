@@ -16,11 +16,14 @@ import type { ExpoConfig } from 'expo/config';
  */
 const offlineOnly = process.env.OFFLINE_ONLY === '1';
 const easProjectId = process.env.EXPO_PROJECT_ID?.trim() || undefined;
+// expo.dev 프로젝트가 팀(조직) 계정 아래에 있으면 그 계정 이름 (예: jusuns-team)
+const easOwner = process.env.EXPO_OWNER?.trim() || undefined;
 const otaEnabled = !!easProjectId && !offlineOnly;
 
 const config: ExpoConfig = {
   name: 'Gemma Chat',
   slug: 'gemma-chat',
+  ...(easOwner ? { owner: easOwner } : {}),
   version: '1.0.0',
   orientation: 'portrait',
   icon: './assets/icon.png',

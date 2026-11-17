@@ -165,7 +165,7 @@ npx eas-cli@latest build -p android --profile production
 
 준비 (한 번):
 1. https://expo.dev 에 가입하고 *Projects › Create a project*에서 이름을 **`gemma-chat`**으로 만듭니다. slug가 다르면 배포가 실패합니다.
-2. 프로젝트 ID(UUID)를 저장소 *Settings › Secrets and variables › Actions › **Variables***에 `EXPO_PROJECT_ID`로 등록합니다.
+2. 프로젝트 ID(UUID)를 저장소 *Settings › Secrets and variables › Actions › **Variables***에 `EXPO_PROJECT_ID`로 등록합니다. 프로젝트가 팀(조직) 계정 아래에 있으면 그 계정 이름도 `EXPO_OWNER`로 등록합니다.
 3. expo.dev *Account settings › Access tokens*에서 토큰을 만들어 ***Secrets***에 `EXPO_TOKEN`으로 등록합니다.
 4. *Actions*에서 **iOS unsigned IPA**와 **Android APK**를 *Run workflow*로 다시 실행하고, 이 빌드를 **마지막으로 한 번** 설치합니다(OTA가 켜진 빌드).
 
