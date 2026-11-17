@@ -132,11 +132,25 @@ export async function downloadModel(onProgress: OnProgress, signal: AbortSignal)
   }
 
   let base = m.parts.slice(0, done).reduce((s, p) => s + p.size, 0);
-  const t0 = Date.now();
-  const baseAtStart = base;
+  // 속도는 "최근 5초 동안 실제로 내려받은 양"으로 계산한다.
+  // (전체 평균으로 계산하면 조각 검사·이어 붙이기 시간까지 포함돼 2번째 조각부터 속도가 낮게 보인다)
+  let samples: { t: number; bytes: number }[] = [];
+  let speed = 0;
+  let lastEmit = 0;
+  const resetSpeed = () => {
+    samples = [];
+  };
   const report = (bytesNow: number, label: string, stage: 'downloading' | 'joining' | 'verifying') => {
-    const secs = (Date.now() - t0) / 1000;
-    const speed = secs > 1 ? (bytesNow - baseAtStart) / secs : 0;
+    const now = Date.now();
+    if (stage === 'downloading') {
+      samples.push({ t: now, bytes: bytesNow });
+      while (samples.length > 2 && now - samples[0].t > 5000) samples.shift();
+      const first = samples[0];
+      if (now - first.t >= 1000) speed = (bytesNow - first.bytes) / ((now - first.t) / 1000);
+      // 진행률 이벤트가 매우 잦으므로 화면 갱신은 0.25초에 한 번만
+      if (now - lastEmit < 250) return;
+    }
+    lastEmit = now;
     const left = speed > 0 ? Math.round((m.size - bytesNow) / speed) : 0;
     onProgress({
       stage,
@@ -156,6 +170,7 @@ export async function downloadModel(onProgress: OnProgress, signal: AbortSignal)
     const partFile = new File(dir, p.name);
     if (partFile.exists) partFile.delete();
 
+    resetSpeed();
     const task = File.createDownloadTask(`${MODEL_RELEASE_URL}/${encodeURIComponent(p.name)}`, partFile, {
       onProgress: ({ bytesWritten }) => report(base + bytesWritten, label, 'downloading'),
       signal,
