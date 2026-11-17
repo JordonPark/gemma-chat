@@ -29,6 +29,12 @@ git lfs install
 npm run pack-model
 ```
 
+Windows에서는 **Git for Windows**(git-lfs 포함)와 **Python 3**을 설치한 뒤, 저장소 폴더에서 **Git Bash**를 열고 실행합니다. Node.js가 없어도 됩니다.
+
+```bash
+bash tools/pack_model.sh
+```
+
 `tools/pack_model.sh`는 다음을 실행합니다.
 1. `GIT_LFS_SKIP_SMUDGE=1 git clone https://huggingface.co/google/gemma-3-4b-it-qat-q4_0-gguf model-src`
 2. `git lfs pull --include gemma-3-4b-it-q4_0.gguf`로 약 3.2GB 본문만 받습니다. 비전용 `mmproj` 파일은 받지 않습니다.

@@ -5,6 +5,7 @@
 # 사전 준비
 #   1) https://huggingface.co/google/gemma-3-4b-it-qat-q4_0-gguf 에서 Gemma 라이선스 동의
 #   2) git, git-lfs, python3 설치,  git lfs install
+#      (Windows: Git for Windows 를 설치하면 git-lfs 포함. 이 스크립트는 "Git Bash" 에서 실행)
 #   3) HF 토큰(read) 준비 → git 이 비밀번호를 물으면 토큰을 입력
 #
 # 사용법
@@ -21,6 +22,16 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 
 command -v git-lfs >/dev/null || { echo "git-lfs 가 필요합니다: https://git-lfs.com"; exit 1; }
 
+# Python 찾기: Windows(Git Bash)는 python3 대신 python 또는 py 인 경우가 많고,
+# python3 가 Microsoft Store 안내용 가짜 실행 파일일 수도 있어 실제로 실행해 확인한다.
+PY=""
+for cand in "python3" "python" "py -3"; do
+  if $cand -c "import sys; sys.exit(0 if sys.version_info >= (3, 8) else 1)" >/dev/null 2>&1; then
+    PY="$cand"; break
+  fi
+done
+[ -n "$PY" ] || { echo "Python 3.8 이상이 필요합니다: https://www.python.org/downloads/ (설치 시 'Add python.exe to PATH' 체크)"; exit 1; }
+
 if [ ! -d "$WORK/.git" ]; then
   echo "▶ git clone (LFS 본문은 아직 받지 않음): $REPO_URL"
   GIT_LFS_SKIP_SMUDGE=1 git clone --depth 1 "$REPO_URL" "$WORK"
@@ -30,7 +41,7 @@ echo "▶ git lfs pull: $MODEL_FILE  (약 3.2GB)"
 git -C "$WORK" lfs pull --include "$MODEL_FILE"
 
 echo "▶ $PART_SIZE 단위로 분할 + SHA256SUMS 생성 → $OUT/"
-python3 "$HERE/split_model.py" "$WORK/$MODEL_FILE" --size "$PART_SIZE" --out "$OUT"
+$PY "$HERE/split_model.py" "$WORK/$MODEL_FILE" --size "$PART_SIZE" --out "$OUT"
 
 cat <<MSG
 
