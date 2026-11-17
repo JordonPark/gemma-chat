@@ -119,7 +119,12 @@ INTERNET 권한을 뺀 완전 오프라인 빌드(모델은 파일로만 설치)
 npm run android:offline
 ```
 
-APK만 만들려면 `npx expo prebuild -p android`를 실행한 뒤 `cd android && ./gradlew assembleRelease`를 실행합니다.
+**PC에 Android Studio가 없어도 됩니다.** `main`에 앱 코드를 push하면 GitHub Actions(*Android APK*)가 APK를 빌드합니다. 결과는 아래 링크에 올라가며, GitHub 로그인 없이 누구나 받을 수 있습니다.
+https://github.com/JordonPark/gemma-chat/releases/download/android-latest/GemmaChat.apk
+
+휴대폰에서 이 링크를 열어 받고, *출처를 알 수 없는 앱 설치*를 허용하면 설치됩니다. 이 APK는 디버그 키로 서명한 테스트·사내 배포용입니다.
+
+로컬에서 APK만 만들려면 `npx expo prebuild -p android`를 실행한 뒤 `cd android && ./gradlew assembleRelease`를 실행합니다.
 
 ### iOS
 요구 사항: macOS, 최신 Xcode, iPhone(iOS 16.4 이상, RAM 6GB 이상 권장: iPhone 13 Pro, 15, 16 등)

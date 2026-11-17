@@ -43,8 +43,8 @@ const config: ExpoConfig = {
       'expo-build-properties',
       {
         android: {
-          // llama.rn 프리빌트 라이브러리는 arm64-v8a / x86_64 대상
-          buildArchs: ['arm64-v8a', 'x86_64'],
+          // 실제 휴대폰은 모두 arm64. (에뮬레이터용 x86_64 를 빼서 APK 크기·빌드 시간 절약)
+          buildArchs: ['arm64-v8a'],
           extraProguardRules: '-keep class com.rnllama.** { *; }',
         },
       },

@@ -1,0 +1,111 @@
+# Android 릴리스 APK 빌드 → (1) Actions Artifact, (2) GitHub Release "android-latest" 에 첨부
+#
+# 받는 사람은 GitHub 로그인 없이 아래 링크로 바로 받을 수 있다:
+#   https://github.com/<owner>/<repo>/releases/download/android-latest/GemmaChat.apk
+#
+# 서명: Expo 템플릿 기본값(디버그 키스토어)으로 서명된 "사내 배포/테스트용" APK.
+#       Play 스토어에 올리려면 별도 업로드 키로 서명한 AAB 가 필요하다.
+name: Android APK
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'App.tsx'
+      - 'index.ts'
+      - 'src/**'
+      - 'assets/**'
+      - 'app.config.ts'
+      - 'package.json'
+      - 'package-lock.json'
+      - '.github/workflows/android-apk.yml'
+
+concurrency:
+  group: android-apk-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    env:
+      CI: '1'
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install JS dependencies
+        run: npm ci
+
+      - name: Typecheck
+        run: npx tsc --noEmit
+
+      - name: Expo prebuild (Android)
+        run: npx expo prebuild -p android --no-install
+
+      - name: Build release APK
+        working-directory: android
+        run: |
+          ./gradlew assembleRelease --no-daemon -Dorg.gradle.jvmargs="-Xmx6g -XX:MaxMetaspaceSize=1g" \
+            > ../gradle.log 2>&1 && rc=0 || rc=$?
+          grep -E "BUILD (SUCCESSFUL|FAILED)|^\* What went wrong" -A4 ../gradle.log | tail -40 || true
+          exit $rc
+
+      - name: Report build errors
+        if: failure()
+        run: |
+          # 오류를 Actions 주석으로 남겨서 실행 페이지에서 바로 보이게 한다
+          { grep -E "error:|e: |What went wrong" -A2 gradle.log 2>/dev/null || true; } | grep -v "^--$" | head -10 | while IFS= read -r l; do
+            echo "::error::${l//%/%25}"
+          done
+          tail -80 gradle.log 2>/dev/null || true
+
+      - name: Package APK
+        run: |
+          mkdir -p dist
+          cp android/app/build/outputs/apk/release/app-release.apk dist/GemmaChat.apk
+          ls -lh dist/GemmaChat.apk
+          sha256sum dist/GemmaChat.apk | tee dist/GemmaChat.apk.sha256
+
+      - uses: actions/upload-artifact@v6
+        with:
+          name: GemmaChat-apk
+          path: dist/
+          retention-days: 30
+
+      - name: Publish to GitHub Release (android-latest)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG=android-latest
+          NOTES="Gemma Chat Android APK (최신 main 빌드: ${GITHUB_SHA::7})
+
+          설치: 휴대폰에서 GemmaChat.apk 를 받아 열고, '출처를 알 수 없는 앱 설치'를 허용하세요.
+          첫 실행 시 Wi-Fi 에서 모델(약 3.2GB)을 자동으로 받습니다."
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" dist/GemmaChat.apk dist/GemmaChat.apk.sha256 --clobber
+            gh release edit "$TAG" --notes "$NOTES"
+          else
+            gh release create "$TAG" dist/GemmaChat.apk dist/GemmaChat.apk.sha256 \
+              --title "Gemma Chat Android (latest)" --notes "$NOTES" --prerelease
+          fi
+
+      - uses: actions/upload-artifact@v6
+        if: failure()
+        with:
+          name: gradle-log
+          path: gradle.log
+          if-no-files-found: ignore
