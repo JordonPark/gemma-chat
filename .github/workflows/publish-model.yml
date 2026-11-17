@@ -1,0 +1,81 @@
+# Hugging Face git 저장소에서 Gemma 3 4B QAT Q4_0 GGUF 를 받아,
+# 2 GiB 미만 조각 + manifest.json + SHA256SUMS 로 나눠 이 저장소의 GitHub Release 에 올린다.
+# 앱은 첫 실행 때 이 Release 에서 모델을 받는다.
+#
+# 준비 (한 번):
+#   1) huggingface.co/google/gemma-3-4b-it-qat-q4_0-gguf 에서 Gemma 라이선스 동의
+#   2) Hugging Face › Settings › Access Tokens 에서 Read 토큰 생성
+#   3) 이 저장소 › Settings › Secrets and variables › Actions › New repository secret
+#      Name: HF_TOKEN, Secret: 위 토큰
+# 실행: Actions › Publish model › Run workflow
+name: Publish model
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release 태그 (앱은 model-v1 을 받음)'
+        default: 'model-v1'
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      HF_REPO: google/gemma-3-4b-it-qat-q4_0-gguf
+      MODEL_FILE: gemma-3-4b-it-q4_0.gguf
+      TAG: ${{ inputs.tag }}
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Check HF_TOKEN
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        run: |
+          if [ -z "$HF_TOKEN" ]; then
+            echo "::error::HF_TOKEN 시크릿이 없습니다. Settings › Secrets and variables › Actions 에 등록하세요."
+            exit 1
+          fi
+
+      - name: Download model from Hugging Face (git + LFS)
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        run: |
+          git lfs install
+          GIT_LFS_SKIP_SMUDGE=1 git clone --depth 1 "https://user:${HF_TOKEN}@huggingface.co/${HF_REPO}" model-src \
+            || { echo "::error::clone 실패: 토큰이 맞는지, Hugging Face 에서 Gemma 라이선스에 동의했는지 확인하세요."; exit 1; }
+          git -C model-src lfs pull --include "$MODEL_FILE"
+          ls -l "model-src/$MODEL_FILE"
+          head -c 4 "model-src/$MODEL_FILE" | grep -q GGUF || { echo "::error::GGUF 파일이 아닙니다 (LFS 포인터만 받았을 수 있음)"; exit 1; }
+
+      - name: Split + manifest
+        run: |
+          python3 tools/split_model.py "model-src/$MODEL_FILE" --size 1900M --out model-dist
+          cat > model-dist/NOTICE.txt <<'EOF'
+          Gemma is provided under and subject to the Gemma Terms of Use found at ai.google.dev/gemma/terms
+
+          Source: https://huggingface.co/google/gemma-3-4b-it-qat-q4_0-gguf
+          Use of this model must comply with the Gemma Terms of Use and the Gemma Prohibited Use Policy
+          (ai.google.dev/gemma/prohibited_use_policy).
+          EOF
+          ls -l model-dist
+          cat model-dist/manifest.json
+
+      - name: Create / update GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          NOTES="Gemma 3 4B IT QAT Q4_0 (GGUF) — 앱 자동 다운로드용 조각.
+
+          Gemma is provided under and subject to the Gemma Terms of Use found at ai.google.dev/gemma/terms
+          Source: https://huggingface.co/${HF_REPO}"
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" model-dist/* --clobber
+          else
+            gh release create "$TAG" model-dist/* --title "Gemma 3 4B QAT Q4_0 model" --notes "$NOTES"
+          fi
+          gh release view "$TAG"

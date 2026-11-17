@@ -1,13 +1,14 @@
 import type { ExpoConfig } from 'expo/config';
 
 /**
- * 오프라인 전용 빌드 설정.
+ * 앱 설정.
  *
- * - 기본(릴리스) 빌드는 Android INTERNET 권한을 제거해 네트워크를 원천 차단한다.
- * - 개발 중 Metro(JS 번들 서버)에 붙어야 할 때만 APP_VARIANT=development 로 빌드한다.
- *     APP_VARIANT=development npx expo run:android
+ * 네트워크는 최초 1회 모델 다운로드(GitHub Release)에만 쓴다. 채팅(추론)은 기기 안에서만 처리한다.
+ *
+ * 완전 오프라인 빌드(INTERNET 권한 제거, 모델은 파일로만 설치)가 필요하면:
+ *     OFFLINE_ONLY=1 npx expo run:android --variant release
  */
-const isDev = process.env.APP_VARIANT === 'development';
+const offlineOnly = process.env.OFFLINE_ONLY === '1';
 
 const config: ExpoConfig = {
   name: 'Gemma Chat',
@@ -35,7 +36,7 @@ const config: ExpoConfig = {
       monochromeImage: './assets/android-icon-monochrome.png',
     },
     predictiveBackGestureEnabled: false,
-    blockedPermissions: isDev ? [] : ['android.permission.INTERNET'],
+    blockedPermissions: offlineOnly ? ['android.permission.INTERNET'] : [],
   },
   plugins: [
     [

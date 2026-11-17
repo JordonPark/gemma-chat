@@ -1,11 +1,20 @@
-# Gemma Chat — 오프라인 온디바이스 챗봇 (Android / iOS)
+# Gemma Chat — 온디바이스 챗봇 (Android / iOS)
 
 `google/gemma-3-4b-it-qat-q4_0-gguf` 모델을 **기기 안에서만** 실행하는 챗봇 앱입니다.
 
-- **네트워크 미사용**: Android 릴리스 빌드에서는 `INTERNET` 권한 자체를 제거합니다. 앱 코드에도 네트워크 호출이 없습니다.
-- **모델 배포**: PC에서 git(Hugging Face git 저장소 → GitHub Release/LFS)으로 받은 분할 파일을 기기로 옮기면, 앱이 **기기 안에서 이어 붙이고(zip이면 압축 해제) SHA-256으로 검증한 뒤 설치**합니다.
+- **네트워크는 최초 1회만**: 앱을 처음 열면(Wi-Fi일 때 자동) 이 저장소의 GitHub Release에서 모델 조각을 받아 **기기 안에서 이어 붙이고 SHA-256으로 검증한 뒤 설치**합니다. 받다 끊기면 다음 실행 때 이어 받습니다. 설치가 끝나면 채팅은 **인터넷 없이** 기기 안에서만 처리됩니다.
+- **완전 오프라인 설치도 가능**: PC에서 git으로 받은 분할 파일을 USB 등으로 옮겨 넣으면 앱이 기기 안에서 풀어 설치합니다(앱의 "인터넷 없이 파일로 직접 설치"). Android는 `INTERNET` 권한을 빼고 빌드할 수도 있습니다(`npm run android:offline`).
 - **추론 엔진**: [llama.rn](https://github.com/mybigday/llama.rn)(llama.cpp). iOS는 Metal GPU를 쓰고, Android는 CPU를 쓰거나 Adreno OpenCL GPU를 선택해서 켤 수 있습니다.
 - **스택**: Expo SDK 58(React Native 0.88, New Architecture), TypeScript
+
+```
+GitHub Actions "Publish model"                        앱 첫 실행 (Wi-Fi)
+  HF git clone + lfs pull → 1.9GB 조각 분할  ──Release──▶  manifest.json 확인 → 조각별 다운로드
+  → manifest.json / SHA256SUMS / NOTICE                    → 조각 SHA-256 검사 → 이어 붙이기
+                                                           → Documents/models/*.gguf → 채팅(오프라인)
+```
+
+인터넷 없이 설치하는 경로:
 
 ```
 ┌─ PC ─────────────────────────────────────────┐        ┌─ 기기 (오프라인) ───────────────────────────┐
@@ -17,7 +26,16 @@
                                                         └─────────────────────────────────────────────┘
 ```
 
-## 1. 모델 준비 (PC에서 한 번)
+## 1. 모델을 GitHub Release에 올리기 (한 번, 자동 다운로드용)
+
+1. https://huggingface.co/google/gemma-3-4b-it-qat-q4_0-gguf 에서 Gemma 라이선스에 동의합니다.
+2. Hugging Face *Settings › Access Tokens*에서 **Read** 토큰을 만듭니다.
+3. 이 저장소 *Settings › Secrets and variables › Actions › New repository secret*에서 이름 `HF_TOKEN`으로 토큰을 등록합니다.
+4. *Actions › Publish model › Run workflow*를 실행합니다(약 5~10분). Release `model-v1`에 `manifest.json`, `*.gguf.part00`, `part01`, `SHA256SUMS`, `NOTICE.txt`가 올라갑니다.
+
+앱은 `https://github.com/JordonPark/gemma-chat/releases/download/model-v1/manifest.json`을 먼저 읽고 조각을 받습니다(`src/modelDownload.ts`의 `MODEL_RELEASE_URL`). 저장소가 공개이면 Gemma 모델을 공개 재배포하게 되며, Gemma 이용 약관에 따라 `NOTICE.txt`(약관 고지)를 함께 올립니다.
+
+## 1-1. 인터넷 없이 설치할 때: 모델 준비 (PC에서 한 번)
 
 필요한 것: `git`, `git-lfs`, `python3`, 그리고 Hugging Face에서 Gemma 라이선스에 동의한 계정의 read 토큰.
 
@@ -91,16 +109,14 @@ npm install
 ### Android
 요구 사항: Android Studio(SDK, NDK), JDK 17 이상, arm64 기기(RAM 6GB 이상 권장)
 
-릴리스 빌드에서는 INTERNET 권한이 제거되어 완전 오프라인으로 동작합니다.
-
 ```bash
 npm run android:release
 ```
 
-개발 빌드는 Metro에 연결해야 하므로 INTERNET 권한을 유지합니다.
+INTERNET 권한을 뺀 완전 오프라인 빌드(모델은 파일로만 설치)는 아래 명령으로 만듭니다.
 
 ```bash
-npm run android
+npm run android:offline
 ```
 
 APK만 만들려면 `npx expo prebuild -p android`를 실행한 뒤 `cd android && ./gradlew assembleRelease`를 실행합니다.
@@ -126,7 +142,7 @@ Mac이 없으면 GitHub Actions의 macOS 서버가 **서명 없는 .ipa**를 빌
 5. **iPhone 설정:**
    - *설정 › 개인정보 보호 및 보안 › 개발자 모드*를 켜고 재시동합니다.
    - *설정 › 일반 › VPN 및 기기 관리*에서 내 Apple ID 개발자를 *신뢰*합니다.
-6. **모델 넣기:** Windows의 **Apple Devices** 앱(또는 iTunes)에서 iPhone › *파일* › **Gemma Chat**에 `model-dist/`의 조각과 `SHA256SUMS`를 끌어다 놓습니다. 앱에서 *이 파일들로 설치*를 누릅니다.
+6. **모델:** Wi-Fi에서 앱을 열면 자동으로 받습니다. 인터넷 없이 넣으려면 iTunes(또는 Apple Devices) › iPhone › *파일 공유* › **Gemma Chat**에 `model-dist/`의 조각과 `SHA256SUMS`를 끌어다 놓고, 앱의 *인터넷 없이 파일로 직접 설치 › 이 파일들로 설치*를 누릅니다.
 
 무료 Apple ID의 제약:
 - 설치한 앱은 **7일 후 만료**됩니다. Sideloadly로 다시 설치하면 되고, 앱 데이터(설치한 모델)는 유지됩니다.
@@ -140,23 +156,24 @@ npx eas-cli@latest build -p android --profile production
 
 ## 4. 오프라인 동작 확인
 
-- Android: 릴리스 APK를 설치한 뒤 *설정 › 앱 › Gemma Chat › 권한*에 네트워크 권한이 없는지 확인합니다. 비행기 모드에서도 똑같이 동작해야 합니다.
-- `npx expo prebuild -p android`를 실행한 뒤 `android/app/src/main/AndroidManifest.xml`에 다음 줄이 있는지 확인합니다.
+- 네트워크를 쓰는 코드는 `src/modelDownload.ts`(모델 다운로드) 하나뿐이고, 모델이 설치된 뒤에는 호출되지 않습니다. 모델 설치 후 비행기 모드에서 채팅이 그대로 동작해야 합니다.
+- `npm run android:offline`으로 만든 빌드는 `npx expo prebuild -p android` 결과의 `AndroidManifest.xml`에 다음 줄이 들어갑니다.
   `<uses-permission android:name="android.permission.INTERNET" tools:node="remove"/>`
-- iOS에는 네트워크 "권한"이라는 개념이 없지만, 앱 코드에 네트워크 호출이 없고 비행기 모드에서 정상 동작합니다.
 
 ## 5. 구조
 
 ```
 App.tsx                 화면 상태 전환 (모델 검색 → 설치 → 로딩 → 채팅)
-src/modelStore.ts       조각 이어 붙이기 / 압축 해제 / SHA-256 검증 / 설치 모델 탐색
+src/modelDownload.ts    최초 1회 자동 다운로드 (GitHub Release, 조각별 검증, 이어받기)
+src/modelStore.ts       수동 설치: 조각 이어 붙이기 / 압축 해제 / SHA-256 검증 / 설치 모델 탐색
 src/llm.ts              llama.rn 래퍼: 로드, Gemma 채팅 템플릿(jinja), 스트리밍, 컨텍스트 길이 맞추기
 src/ChatScreen.tsx      채팅 UI, 생성 중지, 설정(시스템 프롬프트, n_ctx, 토큰 수, temperature, GPU)
 src/SetupScreen.tsx     모델 가져오기 UI와 진행률
 src/storage.ts          설정과 대화를 기기 안 JSON 파일로 저장
 tools/pack_model.sh     PC: HF git 저장소에서 받아 분할
-tools/split_model.py    PC: 분할 + SHA256SUMS
-app.config.ts           INTERNET 권한 제거, 파일 공유(iOS), llama.rn 플러그인
+tools/split_model.py    분할 + SHA256SUMS + manifest.json
+.github/workflows/      publish-model.yml(모델 → Release), ios-unsigned.yml(서명 없는 .ipa)
+app.config.ts           OFFLINE_ONLY 빌드 시 INTERNET 제거, 파일 공유(iOS), llama.rn 플러그인
 ```
 
 ## 6. 기본 생성 설정 (Gemma 3 권장값)
@@ -170,6 +187,8 @@ app.config.ts           INTERNET 권한 제거, 파일 공유(iOS), llama.rn 플
 | 증상 | 조치 |
 |---|---|
 | "GGUF/ZIP 헤더로 시작하지 않음" | `part00`이 빠졌거나, git-lfs 포인터 파일(약 130바이트)만 받은 경우입니다. `git lfs pull`을 다시 실행하세요. |
+| "아직 모델이 GitHub Release에 올라가 있지 않습니다" | *Actions › Publish model*을 먼저 실행하세요(1번 항목). |
+| 다운로드가 중간에 멈춤 | 앱을 다시 열면 마지막으로 끝난 조각 다음부터 이어 받습니다. 받는 동안에는 앱을 켜 두세요. |
 | "SHA-256 불일치" | 조각 일부가 손상됐거나 빠졌습니다. 다시 복사하세요. |
 | 로딩 중 앱 종료 | RAM 부족입니다. 설정에서 n_ctx를 2048로 줄이고, iOS는 엔타이틀먼트를 확인하세요. |
 | Android에서 느림 | Snapdragon 8 Gen 2 이상(Adreno 7xx)이면 설정에서 GPU 가속을 켜 보세요. |

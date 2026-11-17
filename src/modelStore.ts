@@ -1,8 +1,8 @@
 /**
- * 모델 파일 관리 (완전 오프라인).
+ * 모델 파일 관리.
  *
- * git(GitHub Releases / Git LFS / Hugging Face git)에서 PC로 받은 파일을
- * 기기로 옮긴 뒤, 앱이 기기 안에서 "푼다":
+ * 자동 다운로드(최초 1회)는 src/modelDownload.ts 가 담당하고,
+ * 여기서는 PC에서 옮겨 온 파일을 기기 안에서 "푸는" 수동 설치를 처리한다:
  *
  *   1) 분할 조각(.part00, .part01 … / .001, .002 …)  → 이름순으로 이어 붙임
  *   2) .zip (분할된 zip 조각을 이어 붙인 결과 포함)     → 압축 해제
@@ -23,9 +23,16 @@ const ZIP_MAGIC = [0x50, 0x4b, 0x03, 0x04]; // "PK\x03\x04"
 export const modelsDir = () => new Directory(Paths.document, 'models');
 const workDir = () => new Directory(Paths.document, '.import-work');
 
-export type ImportStage = 'checking' | 'joining' | 'copying' | 'unzipping' | 'verifying' | 'done';
+export type ImportStage =
+  | 'checking'
+  | 'downloading'
+  | 'joining'
+  | 'copying'
+  | 'unzipping'
+  | 'verifying'
+  | 'done';
 export type ImportProgress = { stage: ImportStage; ratio: number; detail?: string };
-type OnProgress = (p: ImportProgress) => void;
+export type OnProgress = (p: ImportProgress) => void;
 
 export type InstalledModel = { file: File; path: string; name: string; size: number };
 
@@ -40,11 +47,11 @@ export function formatBytes(n: number): string {
   return `${(n / 1024 ** i).toFixed(i >= 3 ? 2 : 0)} ${u[i]}`;
 }
 
-function ensureDir(d: Directory) {
+export function ensureDir(d: Directory) {
   if (!d.exists) d.create({ intermediates: true, idempotent: true });
 }
 
-async function readMagic(f: File): Promise<number[]> {
+export async function readMagic(f: File): Promise<number[]> {
   const h = f.open(FileMode.ReadOnly);
   try {
     return Array.from(await h.readBytes(4));
@@ -52,6 +59,8 @@ async function readMagic(f: File): Promise<number[]> {
     h.close();
   }
 }
+
+export const isGguf = (magic: number[]) => startsWith(magic, GGUF_MAGIC);
 
 const startsWith = (a: number[], b: number[]) => b.every((v, i) => a[i] === v);
 

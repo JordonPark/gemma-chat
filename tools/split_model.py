@@ -8,6 +8,7 @@ GGUF 모델을 git(GitHub Release / Git LFS)에 올릴 수 있는 크기로 나�
   model-dist/gemma-3-4b-it-q4_0.gguf.part00
   model-dist/gemma-3-4b-it-q4_0.gguf.part01
   model-dist/SHA256SUMS      (원본 전체 + 각 조각의 해시)
+  model-dist/manifest.json   (앱의 자동 다운로드가 읽는 목록: 조각 이름/크기/해시)
 
 조각 크기 기준:
   - GitHub Release 첨부파일 한도 2 GiB  → 1900M (기본값)
@@ -16,6 +17,7 @@ GGUF 모델을 git(GitHub Release / Git LFS)에 올릴 수 있는 크기로 나�
 """
 import argparse
 import hashlib
+import json
 import os
 import sys
 
@@ -49,6 +51,7 @@ def main() -> int:
     total = os.path.getsize(a.model)
     whole = hashlib.sha256()
     lines = []
+    parts = []
     idx = 0
     with open(a.model, "rb") as f:
         while True:
@@ -68,6 +71,7 @@ def main() -> int:
                 os.remove(os.path.join(a.out, part_name))
                 break
             lines.append(f"{h.hexdigest()}  {part_name}")
+            parts.append({"name": part_name, "size": written, "sha256": h.hexdigest()})
             print(f"  {part_name}  {written / 1024**2:,.0f} MiB")
             idx += 1
             if written < size:
@@ -76,6 +80,16 @@ def main() -> int:
     lines.insert(0, f"{whole.hexdigest()}  {name}")
     with open(os.path.join(a.out, "SHA256SUMS"), "w") as s:
         s.write("\n".join(lines) + "\n")
+    manifest = {
+        "format": 1,
+        "name": name,
+        "size": total,
+        "sha256": whole.hexdigest(),
+        "license": "Gemma is provided under and subject to the Gemma Terms of Use found at ai.google.dev/gemma/terms",
+        "parts": parts,
+    }
+    with open(os.path.join(a.out, "manifest.json"), "w") as m:
+        json.dump(manifest, m, indent=2)
     print(f"완료: {idx}개 조각, 전체 {total / 1024**3:.2f} GiB, SHA256 {whole.hexdigest()}")
     return 0
 
