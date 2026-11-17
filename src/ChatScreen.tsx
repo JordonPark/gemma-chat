@@ -24,6 +24,7 @@ import {
   type Settings,
 } from './llm';
 import { formatBytes, type InstalledModel } from './modelStore';
+import { Markdown } from './Markdown';
 import { loadChat, saveChat } from './storage';
 import { colors } from './theme';
 
@@ -115,9 +116,13 @@ export function ChatScreen({ model, settings, gpuInfo, onChangeSettings, onRemov
         }
         renderItem={({ item }) => (
           <View style={[styles.bubble, item.role === 'user' ? styles.userBubble : styles.botBubble]}>
-            <Text selectable style={[styles.msg, item.role === 'user' && styles.userText]}>
-              {item.content}
-            </Text>
+            {item.role === 'assistant' ? (
+              <Markdown text={item.content} />
+            ) : (
+              <Text selectable style={[styles.msg, styles.userText]}>
+                {item.content}
+              </Text>
+            )}
           </View>
         )}
       />
