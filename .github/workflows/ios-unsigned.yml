@@ -1,0 +1,104 @@
+# 서명 없는 iOS .ipa 빌드 (무료 Apple ID + Sideloadly 로 설치하기 위함)
+#
+# 결과물: Actions 실행 페이지 하단 Artifacts > GemmaChat-unsigned-ipa
+# 설치:   Windows 에서 Sideloadly 로 .ipa 를 iPhone 에 설치 (README "iOS — Windows + 무료 Apple ID" 참고)
+name: iOS unsigned IPA
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'App.tsx'
+      - 'index.ts'
+      - 'src/**'
+      - 'assets/**'
+      - 'app.config.ts'
+      - 'package.json'
+      - 'package-lock.json'
+      - '.github/workflows/ios-unsigned.yml'
+
+concurrency:
+  group: ios-unsigned-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: macos-latest
+    timeout-minutes: 90
+    env:
+      CI: '1'
+      # NODE_ENV/EAS_BUILD_PROFILE 를 production 으로 두지 않는다:
+      # 무료 Apple ID 는 increased-memory-limit 등 엔타이틀먼트를 쓸 수 없다.
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Select newest Xcode
+        run: |
+          XCODE=$(ls -d /Applications/Xcode_*.app | grep -v -i beta | sort -V | tail -1)
+          echo "Using $XCODE"
+          sudo xcode-select -s "$XCODE/Contents/Developer"
+          xcodebuild -version
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install JS dependencies
+        run: npm ci
+
+      - name: Typecheck
+        run: npx tsc --noEmit
+
+      - name: Expo prebuild (iOS)
+        run: npx expo prebuild -p ios --no-install
+
+      - name: Pod install
+        working-directory: ios
+        run: pod install
+
+      - name: Build (Release, no code signing)
+        run: |
+          xcodebuild \
+            -workspace ios/GemmaChat.xcworkspace \
+            -scheme GemmaChat \
+            -configuration Release \
+            -sdk iphoneos \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath ios/build \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" \
+            build > build.log 2>&1 && rc=0 || rc=$?
+          grep -E "error:|\*\* BUILD" build.log | tail -40 || true
+          exit $rc
+
+      - name: Report build errors
+        if: failure()
+        run: |
+          # 오류를 Actions 주석으로 남겨서 실행 페이지에서 바로 보이게 한다
+          grep -E "error:" build.log 2>/dev/null | sort -u | head -10 | while IFS= read -r l; do
+            echo "::error::${l//%/%25}"
+          done
+          tail -60 build.log 2>/dev/null || true
+
+      - name: Package .ipa
+        run: |
+          APP=$(ls -d ios/build/Build/Products/Release-iphoneos/*.app | head -1)
+          test -f "$APP/main.jsbundle" || { echo "::error::JS 번들이 앱에 포함되지 않았습니다"; exit 1; }
+          mkdir -p dist/Payload
+          cp -R "$APP" dist/Payload/
+          (cd dist && zip -qry GemmaChat-unsigned.ipa Payload)
+          ls -lh dist/GemmaChat-unsigned.ipa
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: GemmaChat-unsigned-ipa
+          path: dist/GemmaChat-unsigned.ipa
+          retention-days: 30
+
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: build-log
+          path: build.log
+          if-no-files-found: ignore

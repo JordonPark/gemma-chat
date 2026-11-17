@@ -100,7 +100,7 @@ npm run android
 APK만 만들려면 `npx expo prebuild -p android`를 실행한 뒤 `cd android && ./gradlew assembleRelease`를 실행합니다.
 
 ### iOS
-요구 사항: macOS, Xcode 16 이상, iPhone(iOS 16 이상, RAM 6GB 이상 권장: iPhone 13 Pro, 15, 16 등)
+요구 사항: macOS, 최신 Xcode, iPhone(iOS 16.4 이상, RAM 6GB 이상 권장: iPhone 13 Pro, 15, 16 등)
 
 ```bash
 npm run ios:release
@@ -108,6 +108,23 @@ npm run ios:release
 
 - `NODE_ENV=production`일 때 llama.rn 플러그인이 `increased-memory-limit`, `extended-virtual-addressing` 엔타이틀먼트를 추가합니다. **유료 Apple Developer 계정**의 App ID에 해당 capability가 켜져 있어야 합니다. 4B 모델은 이 엔타이틀먼트가 없으면 메모리 한도에 걸려 종료될 수 있습니다.
 - 서명할 Team은 Xcode에서 지정합니다(`ios/*.xcworkspace`).
+
+### iOS — Windows + 무료 Apple ID (Mac 없이)
+
+Mac이 없으면 GitHub Actions의 macOS 서버가 **서명 없는 .ipa**를 빌드하고, Windows의 [Sideloadly](https://sideloadly.io)가 무료 Apple ID로 서명해서 설치합니다.
+
+1. **빌드:** `main`에 앱 코드를 push하면 자동으로 빌드됩니다. 저장소 *Actions › iOS unsigned IPA › Run workflow*로 직접 실행할 수도 있습니다. 25~40분 걸립니다.
+2. **다운로드:** 실행 페이지 하단 *Artifacts*에서 `GemmaChat-unsigned-ipa`를 받아 압축을 풀면 `GemmaChat-unsigned.ipa`가 나옵니다.
+3. **Windows 준비:** Apple 웹사이트에서 받은 **iTunes**와 **iCloud**를 설치합니다(Microsoft Store 버전 말고 apple.com 버전 권장). 그다음 Sideloadly를 설치합니다.
+4. **설치:** iPhone을 USB로 연결하고 "이 컴퓨터 신뢰"를 누릅니다. Sideloadly에 .ipa를 끌어다 놓고, Apple ID를 입력한 뒤 *Start*를 누릅니다.
+5. **iPhone 설정:**
+   - *설정 › 개인정보 보호 및 보안 › 개발자 모드*를 켜고 재시동합니다.
+   - *설정 › 일반 › VPN 및 기기 관리*에서 내 Apple ID 개발자를 *신뢰*합니다.
+6. **모델 넣기:** Windows의 **Apple Devices** 앱(또는 iTunes)에서 iPhone › *파일* › **Gemma Chat**에 `model-dist/`의 조각과 `SHA256SUMS`를 끌어다 놓습니다. 앱에서 *이 파일들로 설치*를 누릅니다.
+
+무료 Apple ID의 제약:
+- 설치한 앱은 **7일 후 만료**됩니다. Sideloadly로 다시 설치하면 되고, 앱 데이터(설치한 모델)는 유지됩니다.
+- `increased-memory-limit` 엔타이틀먼트를 쓸 수 없어 iOS가 앱에 주는 메모리가 작습니다. **RAM 8GB 기종**(iPhone 15 Pro 이상, 16 시리즈 이상)을 권장하고, 6GB 기종은 로딩 중 종료될 수 있습니다. 종료되면 설정에서 컨텍스트 길이를 2048로 줄이거나 GPU를 꺼 보세요.
 
 ### EAS (클라우드 빌드)
 

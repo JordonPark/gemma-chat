@@ -17,8 +17,7 @@ const config: ExpoConfig = {
   icon: './assets/icon.png',
   userInterfaceStyle: 'automatic',
   ios: {
-    bundleIdentifier: 'com.example.gemmachat',
-    deploymentTarget: '16.0',
+    bundleIdentifier: 'com.jordonpark.gemmachat',
     supportsTablet: true,
     infoPlist: {
       // Finder(맥) / 파일 앱에서 앱의 Documents 폴더에 모델 파일을 직접 넣을 수 있게 한다.
@@ -28,7 +27,7 @@ const config: ExpoConfig = {
     },
   },
   android: {
-    package: 'com.example.gemmachat',
+    package: 'com.jordonpark.gemmachat',
     adaptiveIcon: {
       backgroundColor: '#E6F4FE',
       foregroundImage: './assets/android-icon-foreground.png',
