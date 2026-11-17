@@ -63,13 +63,33 @@ export function hasPartialDownload(): boolean {
   return !!s && s.done > 0;
 }
 
+/** 바깥 signal 이 취소되면 같이 취소되는 하위 AbortController */
+function childController(parent?: AbortSignal) {
+  const ac = new AbortController();
+  const onAbort = () => ac.abort();
+  if (parent?.aborted) ac.abort();
+  parent?.addEventListener('abort', onAbort);
+  return { ac, dispose: () => parent?.removeEventListener('abort', onAbort) };
+}
+
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
 export async function fetchManifest(signal?: AbortSignal): Promise<Manifest> {
+  const { ac, dispose } = childController(signal);
+  const timer = setTimeout(() => ac.abort(), 30_000); // 응답 없으면 30초 후 포기
   let res: Response;
   try {
-    res = await fetch(`${MODEL_RELEASE_URL}/manifest.json`, { signal, cache: 'no-store' });
+    res = await fetch(`${MODEL_RELEASE_URL}/manifest.json`, { signal: ac.signal, cache: 'no-store' });
   } catch (e: any) {
     if (signal?.aborted) throw new DownloadCancelled();
-    throw new Error(`서버에 연결할 수 없습니다. 인터넷 연결을 확인하세요.\n(${e?.message ?? e})`);
+    throw new Error(
+      ac.signal.aborted
+        ? '서버가 30초 동안 응답하지 않습니다. 인터넷 연결을 확인하고 다시 시도하세요.'
+        : `서버에 연결할 수 없습니다. 인터넷 연결을 확인하세요.\n(${e?.message ?? e})`,
+    );
+  } finally {
+    clearTimeout(timer);
+    dispose();
   }
   if (res.status === 404) {
     throw new Error(
@@ -80,6 +100,50 @@ export async function fetchManifest(signal?: AbortSignal): Promise<Manifest> {
   const m = (await res.json()) as Manifest;
   if (!m?.parts?.length || !m.name?.endsWith('.gguf')) throw new Error('manifest.json 형식이 올바르지 않습니다.');
   return m;
+}
+
+const STALL_MS = 60_000; // 이 시간 동안 1바이트도 안 오면 멈춘 것으로 보고 다시 시도
+const MAX_ATTEMPTS = 3;
+
+/**
+ * 조각 하나를 받는다.
+ * iOS 는 일반(foreground) 세션을 쓴다. 기본값인 background 세션은 iOS 시스템이 일정을 조절해
+ * 시작이 늦거나 매우 느릴 수 있고, 앱을 다시 열었을 때 이전 작업이 남아 새 작업이 멈추기도 한다.
+ */
+async function downloadPart(url: string, dest: File, onBytes: (n: number) => void, signal: AbortSignal) {
+  const { ac, dispose } = childController(signal);
+  let last = Date.now();
+  let stalled = false;
+  const watchdog = setInterval(() => {
+    if (Date.now() - last > STALL_MS) {
+      stalled = true;
+      ac.abort();
+    }
+  }, 5_000);
+  try {
+    const task = File.createDownloadTask(url, dest, {
+      sessionType: 'foreground',
+      signal: ac.signal,
+      onProgress: ({ bytesWritten }) => {
+        last = Date.now();
+        onBytes(bytesWritten);
+      },
+    });
+    let got: File | null = null;
+    try {
+      got = await task.downloadAsync();
+    } catch (e) {
+      if (signal.aborted) throw new DownloadCancelled();
+      if (stalled) throw new Error('1분 넘게 데이터가 오지 않습니다');
+      throw e;
+    }
+    if (signal.aborted) throw new DownloadCancelled();
+    if (stalled) throw new Error('1분 넘게 데이터가 오지 않습니다');
+    if (!got) throw new Error('다운로드가 중단되었습니다');
+  } finally {
+    clearInterval(watchdog);
+    dispose();
+  }
 }
 
 async function appendFile(src: File, dest: File, onBytes: (n: number) => void) {
@@ -132,6 +196,13 @@ export async function downloadModel(onProgress: OnProgress, signal: AbortSignal)
   }
 
   let base = m.parts.slice(0, done).reduce((s, p) => s + p.size, 0);
+  if (done > 0) {
+    onProgress({
+      stage: 'downloading',
+      ratio: base / m.size,
+      detail: `이어받기: 조각 ${done + 1}/${m.parts.length}부터 (${formatBytes(base)} 완료)`,
+    });
+  }
   // 속도는 "최근 5초 동안 실제로 내려받은 양"으로 계산한다.
   // (전체 평균으로 계산하면 조각 검사·이어 붙이기 시간까지 포함돼 2번째 조각부터 속도가 낮게 보인다)
   let samples: { t: number; bytes: number }[] = [];
@@ -139,6 +210,7 @@ export async function downloadModel(onProgress: OnProgress, signal: AbortSignal)
   let lastEmit = 0;
   const resetSpeed = () => {
     samples = [];
+    speed = 0;
   };
   const report = (bytesNow: number, label: string, stage: 'downloading' | 'joining' | 'verifying') => {
     const now = Date.now();
@@ -167,22 +239,40 @@ export async function downloadModel(onProgress: OnProgress, signal: AbortSignal)
     if (signal.aborted) throw new DownloadCancelled();
     const p = m.parts[i];
     const label = `조각 ${i + 1}/${m.parts.length}`;
-    const partFile = new File(dir, p.name);
-    if (partFile.exists) partFile.delete();
-
-    resetSpeed();
-    const task = File.createDownloadTask(`${MODEL_RELEASE_URL}/${encodeURIComponent(p.name)}`, partFile, {
-      onProgress: ({ bytesWritten }) => report(base + bytesWritten, label, 'downloading'),
-      signal,
-    });
-    let got: File | null = null;
-    try {
-      got = await task.downloadAsync();
-    } catch (e: any) {
-      if (signal.aborted) throw new DownloadCancelled();
-      throw new Error(`${label} 다운로드 실패: ${e?.message ?? e}\n다시 시도하면 이 조각부터 이어서 받습니다.`);
+    // 이전 실행에서 남은 조각 파일 정리 (이어 붙인 파일·상태 파일만 남긴다)
+    for (const e of dir.list()) {
+      if (e.uri !== joined.uri && e.uri !== stateFile().uri) e.delete();
     }
-    if (!got || signal.aborted) throw new DownloadCancelled();
+
+    const url = `${MODEL_RELEASE_URL}/${encodeURIComponent(p.name)}`;
+    let partFile = new File(dir, p.name);
+    for (let attempt = 1; ; attempt++) {
+      resetSpeed();
+      lastEmit = 0;
+      onProgress({
+        stage: 'downloading',
+        ratio: base / m.size,
+        detail: `${label} 연결 중…${attempt > 1 ? ` (재시도 ${attempt - 1}/${MAX_ATTEMPTS - 1})` : ''}`,
+      });
+      // 매 시도마다 새 이름: 이전 버전 앱이 남긴 iOS 백그라운드 다운로드가 늦게 끝나더라도 겹치지 않게
+      partFile = new File(dir, `${p.name}.${Date.now().toString(36)}`);
+      try {
+        await downloadPart(url, partFile, (n) => report(base + n, label, 'downloading'), signal);
+        break;
+      } catch (e: any) {
+        try {
+          if (partFile.exists) partFile.delete(); // 실패한 시도의 조각은 바로 지워 공간 확보
+        } catch {}
+        if (e instanceof DownloadCancelled || signal.aborted) throw new DownloadCancelled();
+        if (attempt >= MAX_ATTEMPTS) {
+          throw new Error(
+            `${label} 다운로드 실패 (${MAX_ATTEMPTS}번 시도): ${e?.message ?? e}\n` +
+              'Wi-Fi 연결을 확인하고 다시 시도하세요. 이미 받은 조각은 유지됩니다.',
+          );
+        }
+        await sleep(3_000 * attempt);
+      }
+    }
 
     report(base + p.size, `${label} 검사 중`, 'verifying');
     if (partFile.size !== p.size) {
