@@ -34,7 +34,8 @@ jobs:
     timeout-minutes: 90
     env:
       CI: '1'
-      # 저장소 Settings › Variables 의 EXPO_PROJECT_ID 가 있으면 OTA 업데이트가 켜진 앱을 빌드한다
+      # 저장소 Settings › Variables 의 EXPO_PROJECT_ID(+ 팀 계정이면 EXPO_OWNER)가 있으면
+      # OTA 업데이트가 켜진 앱을 빌드한다. 값을 바꾼 뒤에는 앱을 새로 빌드·설치해야 반영된다.
       EXPO_PROJECT_ID: ${{ vars.EXPO_PROJECT_ID }}
       EXPO_OWNER: ${{ vars.EXPO_OWNER }}
       CMAKE_C_COMPILER_LAUNCHER: ccache

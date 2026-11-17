@@ -27,9 +27,10 @@ export function UpdateBanner({ busy }: { busy: boolean }) {
 export function describeAppVersion(): string {
   if (!Updates.isEnabled) return 'OTA 업데이트 꺼짐 (내장 버전)';
   const when = Updates.createdAt ? Updates.createdAt.toLocaleString() : '';
+  const ch = Updates.channel ? ` · 채널 ${Updates.channel}` : '';
   return Updates.isEmbeddedLaunch
-    ? `내장 버전 · 런타임 ${Updates.runtimeVersion ?? '-'}`
-    : `업데이트 ${Updates.updateId?.slice(0, 8) ?? ''} · ${when}`;
+    ? `내장 버전 · 런타임 ${Updates.runtimeVersion ?? '-'}${ch}`
+    : `OTA 업데이트 ${Updates.updateId?.slice(0, 8) ?? ''} · ${when}${ch}`;
 }
 
 /** 설정 화면의 "업데이트 확인" 버튼 */
