@@ -72,7 +72,7 @@ function childController(parent?: AbortSignal) {
   return { ac, dispose: () => parent?.removeEventListener('abort', onAbort) };
 }
 
-const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+export const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 export async function fetchManifest(signal?: AbortSignal): Promise<Manifest> {
   const { ac, dispose } = childController(signal);
@@ -103,14 +103,14 @@ export async function fetchManifest(signal?: AbortSignal): Promise<Manifest> {
 }
 
 const STALL_MS = 60_000; // 이 시간 동안 1바이트도 안 오면 멈춘 것으로 보고 다시 시도
-const MAX_ATTEMPTS = 3;
+export const MAX_ATTEMPTS = 3;
 
 /**
  * 조각 하나를 받는다.
  * iOS 는 일반(foreground) 세션을 쓴다. 기본값인 background 세션은 iOS 시스템이 일정을 조절해
  * 시작이 늦거나 매우 느릴 수 있고, 앱을 다시 열었을 때 이전 작업이 남아 새 작업이 멈추기도 한다.
  */
-async function downloadPart(url: string, dest: File, onBytes: (n: number) => void, signal: AbortSignal) {
+export async function downloadPart(url: string, dest: File, onBytes: (n: number) => void, signal: AbortSignal) {
   const { ac, dispose } = childController(signal);
   let last = Date.now();
   let stalled = false;

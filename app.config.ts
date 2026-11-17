@@ -24,7 +24,9 @@ const config: ExpoConfig = {
   name: 'Gemma Chat',
   slug: 'gemma-chat',
   ...(easOwner ? { owner: easOwner } : {}),
-  version: '1.0.0',
+  // 네이티브 변경(라이브러리·권한) 때마다 올린다 → OTA 업데이트가 맞는 앱에만 간다
+  // 1.1.0: 카메라·사진(expo-image-picker, expo-image-manipulator) 추가
+  version: '1.1.0',
   orientation: 'portrait',
   icon: './assets/icon.png',
   userInterfaceStyle: 'automatic',
@@ -61,6 +63,14 @@ const config: ExpoConfig = {
     blockedPermissions: offlineOnly ? ['android.permission.INTERNET'] : [],
   },
   plugins: [
+    [
+      'expo-image-picker',
+      {
+        cameraPermission: '사진을 찍어 기기 안에서 물체·글자를 인식하고 인증하는 데 사용합니다. 사진은 기기 밖으로 나가지 않습니다.',
+        photosPermission: '앨범의 사진을 기기 안에서 인식하고 인증하는 데 사용합니다. 사진은 기기 밖으로 나가지 않습니다.',
+        microphonePermission: false,
+      },
+    ],
     [
       'expo-build-properties',
       {

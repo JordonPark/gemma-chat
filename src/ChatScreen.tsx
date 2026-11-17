@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import {
   Alert,
   FlatList,
+  Image,
   KeyboardAvoidingView,
   Modal,
   Platform,
@@ -28,6 +29,9 @@ import { Markdown } from './Markdown';
 import { UpdateBanner, checkForUpdateInteractive, describeAppVersion } from './UpdateBanner';
 import { loadChat, saveChat } from './storage';
 import { colors } from './theme';
+import { describeVision, useVision, type VisionStatus } from './useVision';
+import { VerifyScreen } from './VerifyScreen';
+import { deleteImages, pickImage, type ImageSource } from './vision';
 
 const uid = () => `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
 
@@ -46,19 +50,46 @@ export function ChatScreen({ model, settings, gpuInfo, onChangeSettings, onRemov
   const [streaming, setStreaming] = useState<string | null>(null);
   const [stats, setStats] = useState<GenStats | null>(null);
   const [showSettings, setShowSettings] = useState(false);
+  const [showVerify, setShowVerify] = useState(false);
+  const [pendingImage, setPendingImage] = useState<string | null>(null);
   const listRef = useRef<FlatList<ChatMessage>>(null);
+  const vision = useVision(settings);
 
   useEffect(() => saveChat(messages), [messages]);
 
   const busy = streaming !== null;
+  const canSend = !!input.trim() || !!pendingImage;
+
+  const attach = () => {
+    if (busy || !vision.ensureReady()) return;
+    const go = async (src: ImageSource) => {
+      try {
+        const uri = await pickImage(src);
+        if (uri) setPendingImage(uri);
+      } catch (e: any) {
+        Alert.alert('사진', String(e?.message ?? e));
+      }
+    };
+    Alert.alert('사진 첨부', '사진은 이 기기 안에서만 처리됩니다.', [
+      { text: '카메라로 찍기', onPress: () => go('camera') },
+      { text: '앨범에서 고르기', onPress: () => go('library') },
+      { text: '취소', style: 'cancel' },
+    ]);
+  };
 
   const send = async () => {
     const text = input.trim();
-    if (!text || busy) return;
-    const userMsg: ChatMessage = { id: uid(), role: 'user', content: text };
+    if (!canSend || busy) return;
+    const userMsg: ChatMessage = {
+      id: uid(),
+      role: 'user',
+      content: text || (pendingImage ? '이 사진에 무엇이 있는지 설명하고, 보이는 글자가 있으면 읽어 주세요.' : ''),
+      ...(pendingImage ? { image: pendingImage } : {}),
+    };
     const history = [...messages, userMsg];
     setMessages(history);
     setInput('');
+    setPendingImage(null);
     setStreaming('');
     setStats(null);
     await activateKeepAwakeAsync('gen');
@@ -78,6 +109,8 @@ export function ChatScreen({ model, settings, gpuInfo, onChangeSettings, onRemov
     if (busy) return;
     setMessages([]);
     setStats(null);
+    setPendingImage(null);
+    deleteImages();
     resetConversationCache().catch(() => {});
   };
 
@@ -97,6 +130,9 @@ export function ChatScreen({ model, settings, gpuInfo, onChangeSettings, onRemov
             {stats ? ` · ${stats.tokPerSec.toFixed(1)} tok/s` : ''}
           </Text>
         </View>
+        <Pressable onPress={() => setShowVerify(true)} style={styles.hBtn} disabled={busy}>
+          <Text style={styles.hBtnText}>인증</Text>
+        </Pressable>
         <Pressable onPress={newChat} style={styles.hBtn} disabled={busy}>
           <Text style={styles.hBtnText}>새 대화</Text>
         </Pressable>
@@ -106,6 +142,7 @@ export function ChatScreen({ model, settings, gpuInfo, onChangeSettings, onRemov
       </View>
 
       <UpdateBanner busy={busy} />
+      <VisionDownloadBar status={vision.status} onCancel={vision.cancelDownload} />
 
       <FlatList
         ref={listRef}
@@ -122,15 +159,31 @@ export function ChatScreen({ model, settings, gpuInfo, onChangeSettings, onRemov
             {item.role === 'assistant' ? (
               <Markdown text={item.content} />
             ) : (
-              <Text selectable style={[styles.msg, styles.userText]}>
-                {item.content}
-              </Text>
+              <>
+                {item.image ? <Image source={{ uri: item.image }} style={styles.msgImage} resizeMode="cover" /> : null}
+                <Text selectable style={[styles.msg, styles.userText]}>
+                  {item.content}
+                </Text>
+              </>
             )}
           </View>
         )}
       />
 
+      {pendingImage ? (
+        <View style={styles.pending}>
+          <Image source={{ uri: pendingImage }} style={styles.pendingImage} />
+          <Text style={styles.pendingText}>사진 첨부됨 · 질문을 적거나 그대로 전송하세요</Text>
+          <Pressable onPress={() => setPendingImage(null)} style={styles.pendingX}>
+            <Text style={styles.pendingXText}>✕</Text>
+          </Pressable>
+        </View>
+      ) : null}
+
       <View style={[styles.inputRow, { paddingBottom: Math.max(insets.bottom, 8) }]}>
+        <Pressable style={[styles.attach, busy && styles.off]} onPress={attach} disabled={busy}>
+          <Text style={styles.attachText}>📷</Text>
+        </Pressable>
         <TextInput
           style={styles.input}
           value={input}
@@ -145,16 +198,26 @@ export function ChatScreen({ model, settings, gpuInfo, onChangeSettings, onRemov
             <Text style={styles.sendText}>중지</Text>
           </Pressable>
         ) : (
-          <Pressable style={[styles.send, !input.trim() && styles.off]} onPress={send} disabled={!input.trim()}>
+          <Pressable style={[styles.send, !canSend && styles.off]} onPress={send} disabled={!canSend}>
             <Text style={styles.sendText}>전송</Text>
           </Pressable>
         )}
       </View>
 
+      <VerifyScreen
+        visible={showVerify}
+        onClose={() => setShowVerify(false)}
+        ensureVision={vision.ensureReady}
+        chatBusy={busy}
+      />
+
       <SettingsModal
         visible={showSettings}
         model={model}
         settings={settings}
+        visionStatus={vision.status}
+        onDownloadVision={vision.download}
+        onRemoveVision={vision.remove}
         onClose={() => setShowSettings(false)}
         onSave={(s) => {
           setShowSettings(false);
@@ -173,6 +236,9 @@ function SettingsModal({
   visible,
   model,
   settings,
+  visionStatus,
+  onDownloadVision,
+  onRemoveVision,
   onClose,
   onSave,
   onRemoveModel,
@@ -180,6 +246,9 @@ function SettingsModal({
   visible: boolean;
   model: InstalledModel;
   settings: Settings;
+  visionStatus: VisionStatus;
+  onDownloadVision: () => void;
+  onRemoveVision: () => void;
   onClose: () => void;
   onSave: (s: Settings) => void;
   onRemoveModel: () => void;
@@ -237,6 +306,16 @@ function SettingsModal({
           <Switch value={s.useGpu} onValueChange={(v) => setS({ ...s, useGpu: v })} />
         </View>
 
+        <View style={styles.switchRow}>
+          <View style={styles.flex}>
+            <Text style={styles.label}>이미지 인식 (사진 첨부 · 인증)</Text>
+            <Text style={styles.hint}>
+              상태: {describeVision(visionStatus)}. 메모리를 약 1GB 더 씁니다. 앱이 꺼지면 끄세요.
+            </Text>
+          </View>
+          <Switch value={s.vision} onValueChange={(v) => setS({ ...s, vision: v })} />
+        </View>
+
         <View style={styles.row}>
           <Pressable style={[styles.send, styles.flex, { backgroundColor: colors.border }]} onPress={onClose}>
             <Text style={[styles.sendText, { color: colors.text }]}>취소</Text>
@@ -251,6 +330,26 @@ function SettingsModal({
         <Pressable style={[styles.send, { backgroundColor: colors.border, marginTop: 8 }]} onPress={checkForUpdateInteractive}>
           <Text style={[styles.sendText, { color: colors.text }]}>업데이트 확인</Text>
         </Pressable>
+
+        <Text style={[styles.label, { marginTop: 24 }]}>이미지 인식 파일</Text>
+        <Text style={styles.hint}>{describeVision(visionStatus)}</Text>
+        {visionStatus.kind === 'missing' ? (
+          <Pressable style={[styles.send, { marginTop: 8 }]} onPress={onDownloadVision}>
+            <Text style={styles.sendText}>이미지 인식 파일 받기 (약 0.85GB)</Text>
+          </Pressable>
+        ) : visionStatus.kind !== 'downloading' && visionStatus.kind !== 'checking' ? (
+          <Pressable
+            style={[styles.send, { backgroundColor: colors.border, marginTop: 8 }]}
+            onPress={() =>
+              Alert.alert('이미지 인식 파일 삭제', '약 0.85GB 를 비웁니다. 사진 기능을 다시 쓰려면 다시 받아야 합니다.', [
+                { text: '취소', style: 'cancel' },
+                { text: '삭제', style: 'destructive', onPress: onRemoveVision },
+              ])
+            }
+          >
+            <Text style={[styles.sendText, { color: colors.text }]}>이미지 인식 파일 삭제</Text>
+          </Pressable>
+        ) : null}
 
         <Text style={[styles.label, { marginTop: 24 }]}>모델</Text>
         <Text style={styles.hint}>
@@ -332,6 +431,45 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   sendText: { color: '#fff', fontWeight: '600', fontSize: 15 },
+  attach: {
+    width: 42,
+    height: 42,
+    borderRadius: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: colors.card,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: colors.border,
+  },
+  attachText: { fontSize: 20 },
+  msgImage: { width: 220, height: 220, borderRadius: 10, marginBottom: 6 },
+  pending: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    paddingHorizontal: 12,
+    paddingTop: 8,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: colors.border,
+    backgroundColor: colors.bg,
+  },
+  pendingImage: { width: 52, height: 52, borderRadius: 8 },
+  pendingText: { flex: 1, fontSize: 13, color: colors.muted },
+  pendingX: { padding: 8 },
+  pendingXText: { fontSize: 16, color: colors.muted },
+  dlBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    backgroundColor: colors.card,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: colors.border,
+  },
+  dlText: { fontSize: 13, color: colors.text, marginBottom: 6 },
+  dlTrack: { height: 4, borderRadius: 2, backgroundColor: colors.border, overflow: 'hidden' },
+  dlFill: { height: 4, backgroundColor: colors.accent },
   off: { opacity: 0.4 },
   settings: { padding: 20, gap: 8 },
   label: { fontSize: 14, fontWeight: '600', color: colors.text, marginTop: 8 },
@@ -349,3 +487,23 @@ const styles = StyleSheet.create({
   switchRow: { flexDirection: 'row', alignItems: 'center', gap: 10, marginTop: 8 },
   row: { flexDirection: 'row', gap: 10, marginTop: 16 },
 });
+
+function VisionDownloadBar({ status, onCancel }: { status: VisionStatus; onCancel: () => void }) {
+  if (status.kind !== 'downloading') return null;
+  const pct = Math.round((status.progress?.ratio ?? 0) * 100);
+  return (
+    <View style={styles.dlBar}>
+      <View style={styles.flex}>
+        <Text style={styles.dlText}>
+          이미지 인식 파일 받는 중 {pct}% {status.progress?.detail ? `· ${status.progress.detail}` : ''}
+        </Text>
+        <View style={styles.dlTrack}>
+          <View style={[styles.dlFill, { width: `${pct}%` }]} />
+        </View>
+      </View>
+      <Pressable onPress={onCancel} style={styles.hBtn}>
+        <Text style={[styles.hBtnText, { color: colors.danger }]}>취소</Text>
+      </Pressable>
+    </View>
+  );
+}
