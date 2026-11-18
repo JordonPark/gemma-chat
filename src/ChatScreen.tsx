@@ -37,6 +37,7 @@ import { ChatLibrary, type ChatScope } from './ChatLibrary';
 import { conversationName, hasConversationContent, makeConversation, removeTask, type ChatLibraryData, type ChatTask, type Conversation } from './conversationLibrary';
 import { DuoToolbar, hasDuoToolbar } from './DuoToolbar';
 import { FoldAwareArea } from './FoldAwareArea';
+import { LeftDrawer } from './LeftDrawer';
 import { AnnotatedPhoto } from './AnnotatedPhoto';
 import { analysisHeader, analyzePhoto, needsTranslation, type PhotoAnalysis, type PhotoAnnotations } from './photoAnnotate';
 import { SOLVE_HEADER, arithmeticNote, isSolveRequest } from './problemSolve';
@@ -829,8 +830,8 @@ export function ChatScreen({ model, settings, gpuInfo, initialInput = '', onChan
         </ChatContentArea>
       </DuoToolbar>
 
-      {showLibrary ? (
-        <Modal onRequestClose={() => setShowLibrary(false)} animationType="slide" presentationStyle="fullScreen">
+      {/* 대화 목록: 왼쪽에서 밀려 나오는 서랍 */}
+      <LeftDrawer visible={showLibrary} onClose={() => setShowLibrary(false)}>
           <SafeAreaView style={styles.libraryArea}>
             <KeyboardAvoidingView style={styles.flex} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
               <FoldAwareArea>{(size, division) => {
@@ -844,8 +845,7 @@ export function ChatScreen({ model, settings, gpuInfo, initialInput = '', onChan
               }}</FoldAwareArea>
             </KeyboardAvoidingView>
           </SafeAreaView>
-        </Modal>
-      ) : null}
+      </LeftDrawer>
 
       {reportItem ? <ReportContent item={reportItem} onClose={() => setReportItem(null)} /> : null}
 
