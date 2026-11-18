@@ -34,16 +34,16 @@ jobs:
                       rows.append((m.get("downloads", 0), mid, lic, m.get("lastModified", "")[:10]))
               except Exception as e:
                   print("::warning::search failed", q, e)
-          rows = sorted(set(rows), reverse=True)[:40]
-          print("::notice title=candidates::" + " | ".join(f"{mid} [{lic}] dl={dl} {lm}" for dl, mid, lic, lm in rows))
-          # 상위 후보의 파일 목록 (split_einsum / compiled zip 크기)
-          for dl, mid, lic, lm in rows[:9]:
+          for mid in ["coreml-community/coreml-dreamshaper-4-and-5", "coreml-community/coreml-ReV-Animated", "coreml-community/coreml-Counterfeit",
+                      "coreml-community/coreml-meinamix_meinaV10", "coreml-community/cormel-DreamShaper-v8_cn", "coreml-community/coreml-DreamShaper-v5.0_cn",
+                      "coreml-community/coreml-toonYou-beta5pruned_cn", "coreml-community/coreml-realMoonAnime-v70_cn", "coreml-community/coreml-anything-v5_cn"]:
               try:
                   files = get(f"https://huggingface.co/api/models/{mid}/tree/main?recursive=true")
-                  zs = [f"{x['path']}({round(x.get('size',0)/1e6)}MB)" for x in files if x.get("type") == "file" and re.search(r"\.zip$|split|einsum|compiled", x["path"], re.I)][:12]
-                  dirs = sorted({x["path"].split("/")[0] for x in files})[:12]
-                  print(f"::notice title={mid} [{lic}]::dirs={dirs} files={zs}")
+                  zs = [f"{x['path']}({round(x.get('size',0)/1e6)}MB)" for x in files if x.get("type") == "file" and x["path"].endswith(".zip") and "split" in x["path"].lower()]
+                  card = urllib.request.urlopen(urllib.request.Request(f"https://huggingface.co/{mid}/raw/main/README.md", headers=H), timeout=60).read().decode("utf-8", "ignore")
+                  base = re.findall(r"(?i)(based on [^\n]{0,80}|stable diffusion v?[12][.0-9]*|sd ?1\.5|safety[^\n]{0,60}|6-?bit|8-?bit|palett[^\n]{0,40}|fp16|float16)", card)[:6]
+                  print(f"::notice title={mid}::split_zips={zs} card_hints={base}")
               except Exception as e:
-                  print(f"::warning::{mid} list failed {e}")
+                  print(f"::warning::{mid} failed {e}")
           PY
           python3 s.py
