@@ -41,6 +41,7 @@ import {
   getDrawStyle,
   prepareImageModel,
   type DrawStyle,
+  type ImageModelUpdate,
 } from './imageGen';
 import { describeImageModel, useImageModel, type ImageModelStatus } from './useImageModel';
 import { formatBytes, type InstalledModel } from './modelStore';
@@ -108,6 +109,9 @@ export function ChatScreen({ model, settings, gpuInfo, onChangeSettings, onRemov
     upgradeChecked.current = true;
     checkSmallerModel(model).then(setUpgrade);
   }, [showSettings, model]);
+  useEffect(() => {
+    if (showSettings) imageModel.checkUpdate();
+  }, [showSettings, imageModel]);
   const startUpgrade = () => {
     if (!upgrade || upgradeDl) return;
     Alert.alert(
@@ -738,6 +742,11 @@ export function ChatScreen({ model, settings, gpuInfo, onChangeSettings, onRemov
           imageModelStatus={imageModel.status}
           onDownloadImageModel={imageModel.download}
           onRemoveImageModel={imageModel.remove}
+          imageModelUpdate={imageModel.update}
+          onReplaceImageModel={() => {
+            setShowSettings(false);
+            imageModel.replace();
+          }}
           upgrade={upgrade}
           upgrading={!!upgradeDl}
           onUpgrade={() => {
@@ -796,6 +805,8 @@ function SettingsModal({
   imageModelStatus,
   onDownloadImageModel,
   onRemoveImageModel,
+  imageModelUpdate,
+  onReplaceImageModel,
   upgrade,
   upgrading,
   onUpgrade,
@@ -811,6 +822,8 @@ function SettingsModal({
   imageModelStatus: ImageModelStatus;
   onDownloadImageModel: () => void;
   onRemoveImageModel: () => void;
+  imageModelUpdate: ImageModelUpdate | null;
+  onReplaceImageModel: () => void;
   upgrade: ModelUpgrade | null;
   upgrading: boolean;
   onUpgrade: () => void;
@@ -936,6 +949,10 @@ function SettingsModal({
               <Pressable style={[styles.send, { marginTop: 8 }]} onPress={onDownloadImageModel}>
                 <Text style={styles.sendText}>그림 모델 받기 (약 1.6GB)</Text>
               </Pressable>
+            ) : imageModelStatus.kind === 'ready' && imageModelUpdate ? (
+              <Pressable style={[styles.send, { marginTop: 8 }]} onPress={onReplaceImageModel}>
+                <Text style={styles.sendText}>새 그림 모델로 교체 (일러스트·애니 특화)</Text>
+              </Pressable>
             ) : imageModelStatus.kind === 'ready' ? (
               <Pressable
                 style={[styles.send, { backgroundColor: colors.border, marginTop: 8 }]}
@@ -950,7 +967,7 @@ function SettingsModal({
               </Pressable>
             ) : null}
             <Text style={[styles.hint, { marginTop: 6 }]}>
-              Stable Diffusion 1.5 (Apple Core ML), CreativeML OpenRAIL-M 라이선스. 모든 그림은 기기 안에서 만들어집니다.
+              Counterfeit-V3.0 (Stable Diffusion 1.5 기반 일러스트·애니 모델, Core ML), CreativeML OpenRAIL-M 라이선스. 모든 그림은 기기 안에서 만들어집니다.
             </Text>
           </>
         ) : null}

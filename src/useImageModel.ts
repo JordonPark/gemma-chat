@@ -2,7 +2,15 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Alert } from 'react-native';
 import { activateKeepAwakeAsync, deactivateKeepAwake } from 'expo-keep-awake';
-import { deleteImageModel, downloadImageModel, findInstalledImageModel, isImageGenAvailable, trimImageModel } from './imageGen';
+import {
+  checkImageModelUpdate,
+  deleteImageModel,
+  downloadImageModel,
+  findInstalledImageModel,
+  isImageGenAvailable,
+  trimImageModel,
+  type ImageModelUpdate,
+} from './imageGen';
 import { DownloadCancelled } from './modelDownload';
 import type { ImportProgress } from './modelStore';
 
@@ -53,6 +61,35 @@ export function useImageModel(onDownloaded?: (path: string) => void) {
 
   const cancelDownload = useCallback(() => abortRef.current?.abort(), []);
 
+  // 새 그림 모델이 나왔는지 (설정을 열 때 한 번 확인)
+  const [update, setUpdate] = useState<ImageModelUpdate | null>(null);
+  const updateChecked = useRef(false);
+  const checkUpdate = useCallback(() => {
+    if (updateChecked.current || !isImageGenAvailable()) return;
+    updateChecked.current = true;
+    checkImageModelUpdate().then(setUpdate);
+  }, []);
+  /** 지금 그림 모델을 지우고 새 모델을 받는다 (받은 뒤 onDownloaded 로 미리 준비) */
+  const replace = useCallback(() => {
+    if (!update) return;
+    Alert.alert(
+      '새 그림 모델로 교체',
+      `${update.model}\n\n지금 그림 모델을 지우고 새 모델(약 ${(update.size / 1e9).toFixed(1)}GB)을 받습니다. ` +
+        '압축을 풀 때 그만큼의 여유 공간이 더 필요합니다. Wi-Fi 권장.',
+      [
+        { text: '취소', style: 'cancel' },
+        {
+          text: '교체',
+          onPress: () => {
+            deleteImageModel();
+            setUpdate(null);
+            download();
+          },
+        },
+      ],
+    );
+  }, [update, download]);
+
   const remove = useCallback(() => {
     deleteImageModel();
     refresh();
@@ -76,7 +113,7 @@ export function useImageModel(onDownloaded?: (path: string) => void) {
     return false;
   }, [status, download]);
 
-  return { status, download, cancelDownload, remove, ensureReady };
+  return { status, download, cancelDownload, remove, ensureReady, update, checkUpdate, replace };
 }
 
 export function describeImageModel(s: ImageModelStatus): string {
