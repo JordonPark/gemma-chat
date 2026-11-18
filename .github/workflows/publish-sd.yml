@@ -1,6 +1,8 @@
-# iPhone 이미지 생성용 Stable Diffusion 1.5 (Apple Core ML, 6-bit palettized, Neural Engine 용 split_einsum_v2)
-# 를 Hugging Face 에서 받아 GitHub Release(model-v1)에 sd.json 과 함께 올린다. 앱은 그림 기능을 처음 쓸 때 받는다.
-# 라이선스: CreativeML OpenRAIL-M (모델 카드의 사용 제한을 따른다). NOTICE 를 함께 올린다.
+# iPhone 그림 모델 배포: SD 1.5 기반 일러스트·애니 특화 모델 (Core ML, Neural Engine 용 split_einsum)
+#   - 모델: Counterfeit-V3.0 (coreml-community 변환본, CreativeML OpenRAIL-M)
+#   - 이 변환본에는 안전 검사(SafetyChecker)가 없어서, Apple SD 1.5 패키지의 SafetyChecker.mlmodelc 를 함께 넣는다
+#   - 이 앱은 그림→그림 변환을 쓰지 않으므로 VAEEncoder 는 뺀다
+# 결과를 Release(model-v1)에 올리고 sd.json 을 새 모델로 바꾼다 (이전 sd.json 은 sd-<이전 id>.json 으로 보관).
 name: Publish image model
 
 on:
@@ -16,43 +18,68 @@ permissions:
 jobs:
   publish:
     runs-on: ubuntu-latest
-    timeout-minutes: 40
+    timeout-minutes: 50
     env:
-      HF_REPO: apple/coreml-stable-diffusion-v1-5-palettized
-      HF_FILE: coreml-stable-diffusion-v1-5-palettized_split_einsum_v2_compiled.zip
-      ASSET: sd15-palettized-split-einsum-v2.zip
+      MODEL_ID: counterfeit-v3
+      MODEL_DESC: Counterfeit-V3.0 (SD 1.5 anime/illustration fine-tune, Core ML split_einsum, fp16)
+      HF_REPO: coreml-community/coreml-Counterfeit
+      HF_FILE: split-einsum/Counterfeit-V3.0_split-einsum.zip
+      ASSET: counterfeit-v3-split-einsum.zip
+      SAFETY_SRC: sd15-palettized-split-einsum-v2.zip
       TAG: model-v1
+      GH_TOKEN: ${{ github.token }}
     steps:
-      - name: Download from Hugging Face
+      - name: Download model from Hugging Face
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
         run: |
-          mkdir -p dist
-          curl -sSfL -H "Authorization: Bearer $HF_TOKEN" -o "dist/$ASSET" \
-            "https://huggingface.co/$HF_REPO/resolve/main/$HF_FILE"
-          ls -l dist
-          # 압축 안 구성 확인 (앱이 리소스 폴더를 찾을 때 참고)
-          LIST=$(unzip -l "dist/$ASSET" | awk 'NR>3 && $4 !~ /\/$/ && $4 != "" {print $4}' | grep -v "^__MACOSX" | grep -vE "/(weights|model)\.(bin|mil)$|/analytics/|/model\.mil$|metadata\.json$|coremldata\.bin$" | head -40 | tr '\n' ' ')
-          echo "::notice title=zip contents::$LIST"
-          TOP=$(unzip -l "dist/$ASSET" | awk 'NR>3 {print $4}' | grep -E "\.mlmodelc/$" | head -12 | tr '\n' ' ')
-          echo "::notice title=mlmodelc dirs::$TOP"
+          mkdir -p work && cd work
+          curl -sSfL -H "Authorization: Bearer $HF_TOKEN" -o model.zip "https://huggingface.co/$HF_REPO/resolve/main/$HF_FILE"
+          unzip -q model.zip -d m && rm model.zip
+          RES=$(dirname "$(find m -type d -name 'Unet.mlmodelc' | head -1)")
+          [ -n "$RES" ] && [ "$RES" != "." ] || { echo "::error::Unet.mlmodelc 를 찾지 못했습니다"; find m -maxdepth 3 | head -40; exit 1; }
+          echo "RES=$PWD/$RES" >> "$GITHUB_ENV"
+          echo "::notice title=model contents::$(ls "$RES" | tr '\n' ' ')"
 
-      - name: Manifest + notice
+      - name: Add Apple SafetyChecker, drop VAEEncoder
         run: |
-          SIZE=$(stat -c %s "dist/$ASSET")
-          SHA=$(sha256sum "dist/$ASSET" | cut -d' ' -f1)
-          printf '{\n  "format": 1,\n  "name": "%s",\n  "size": %s,\n  "sha256": "%s",\n  "model": "stable-diffusion-v1-5 (Core ML, 6-bit palettized, split_einsum_v2)",\n  "license": "CreativeML OpenRAIL-M"\n}\n' "$ASSET" "$SIZE" "$SHA" > dist/sd.json
-          cat > dist/NOTICE-SD.txt <<'TXT'
-          Stable Diffusion v1.5 converted to Core ML by Apple (huggingface.co/apple/coreml-stable-diffusion-v1-5-palettized).
-          License: CreativeML OpenRAIL-M. Use of the model must follow the license's use-based restrictions
+          cd work
+          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --pattern "$SAFETY_SRC" --pattern sd.json
+          unzip -q "$SAFETY_SRC" '*SafetyChecker.mlmodelc/*' -d safety && rm "$SAFETY_SRC"
+          SC=$(find safety -type d -name 'SafetyChecker.mlmodelc' | head -1)
+          [ -n "$SC" ] || { echo "::error::SafetyChecker 를 찾지 못했습니다"; exit 1; }
+          rm -rf "$RES/SafetyChecker.mlmodelc" "$RES/VAEEncoder.mlmodelc"
+          cp -R "$SC" "$RES/"
+          for f in TextEncoder.mlmodelc Unet.mlmodelc VAEDecoder.mlmodelc SafetyChecker.mlmodelc vocab.json merges.txt; do
+            [ -e "$RES/$f" ] || { echo "::error::$f 가 없습니다"; exit 1; }
+          done
+          echo "::notice title=resources::$(du -sh "$RES"/* | tr '\n' ' ')"
+
+      - name: Zip + manifest
+        run: |
+          cd work
+          OLD_ID=$(python3 -c "import json;print(json.load(open('sd.json')).get('id','sd15'))")
+          cp sd.json "sd-$OLD_ID.json"
+          mkdir -p ../dist
+          (cd "$(dirname "$RES")" && zip -q -r -0 "$GITHUB_WORKSPACE/dist/$ASSET" "$(basename "$RES")")
+          SIZE=$(stat -c %s "../dist/$ASSET"); SHA=$(sha256sum "../dist/$ASSET" | cut -d' ' -f1)
+          python3 - <<PY
+          import json
+          json.dump({"format": 1, "id": "$MODEL_ID", "name": "$ASSET", "size": $SIZE, "sha256": "$SHA",
+                     "model": "$MODEL_DESC", "license": "CreativeML OpenRAIL-M"}, open("../dist/sd.json", "w"), indent=2)
+          PY
+          cp "sd-$OLD_ID.json" ../dist/
+          cat > ../dist/NOTICE-SD.txt <<'TXT'
+          Image model: Counterfeit-V3.0 (Stable Diffusion 1.5 fine-tune by gsdf), Core ML conversion by coreml-community
+          (huggingface.co/coreml-community/coreml-Counterfeit). Safety checker from Apple's Core ML Stable Diffusion v1.5.
+          License: CreativeML OpenRAIL-M. Use must follow the license's use-based restrictions
           (https://huggingface.co/spaces/CompVis/stable-diffusion-license).
           TXT
-          cat dist/sd.json
-          echo "::notice title=sd.json::$(tr -d '\n' < dist/sd.json)"
+          ls -l ../dist
+          echo "::notice title=sd.json::$(tr -d '\n' < ../dist/sd.json)"
 
       - name: Upload to GitHub Release
-        env:
-          GH_TOKEN: ${{ github.token }}
         run: |
-          gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null
-          gh release upload "$TAG" dist/* --clobber --repo "$GITHUB_REPOSITORY"
+          # 모델 zip 을 먼저 올리고 sd.json 은 마지막에 바꾼다
+          gh release upload "$TAG" "dist/$ASSET" dist/NOTICE-SD.txt dist/sd-*.json --clobber --repo "$GITHUB_REPOSITORY"
+          gh release upload "$TAG" dist/sd.json --clobber --repo "$GITHUB_REPOSITORY"
