@@ -1,7 +1,6 @@
 import { requireOptionalNativeModule } from 'expo-modules-core';
 import { Platform, StyleSheet } from 'react-native';
 import type { DuoToolbarProps } from './DuoToolbar';
-import { APP_NAME } from './storeConfig';
 import { colors } from './theme';
 
 export const hasDuoToolbar = Platform.OS === 'ios' && !Platform.isPad && parseFloat(String(Platform.Version)) >= 27.1
@@ -14,14 +13,14 @@ export function DuoToolbar({ children, busy, onLibrary, onNewChat, onSettings }:
   /* eslint-disable @typescript-eslint/no-require-imports */
   const { Host, NavigationStack, RNHostView, Toolbar, ToolbarItem, Button } =
     require('@expo/ui/swift-ui') as typeof import('@expo/ui/swift-ui');
-  const { disabled, navigationBarTitleDisplayMode, navigationTitle } =
+  const { background, containerBackground, disabled } =
     require('@expo/ui/swift-ui/modifiers') as typeof import('@expo/ui/swift-ui/modifiers');
   /* eslint-enable @typescript-eslint/no-require-imports */
 
   return (
-    <Host style={styles.host} seedColor={colors.accentText}>
+    <Host style={styles.host} modifiers={[background(colors.bg)]} seedColor={colors.accentText}>
       <NavigationStack>
-        <Toolbar modifiers={[navigationTitle(APP_NAME), navigationBarTitleDisplayMode('inline')]}>
+        <Toolbar modifiers={[containerBackground(colors.bg, 'navigation')]}>
           <RNHostView>{children}</RNHostView>
           <Toolbar.Content>
             <ToolbarItem placement="topBarPinnedTrailing" visibilityPriority="high">
@@ -40,4 +39,4 @@ export function DuoToolbar({ children, busy, onLibrary, onNewChat, onSettings }:
   );
 }
 
-const styles = StyleSheet.create({ host: { flex: 1 } });
+const styles = StyleSheet.create({ host: { flex: 1, backgroundColor: colors.bg } });

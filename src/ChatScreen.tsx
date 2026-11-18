@@ -60,6 +60,8 @@ import { clearTempFiles, storageBreakdown } from './storageInfo';
 import { DownloadCancelled, checkSmallerModel, downloadModel, formatDownloadEta, type ModelUpgrade } from './modelDownload';
 
 const uid = () => `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+// SwiftUI's navigation stack already lays out the hosted content inside its safe area.
+const ChatContentArea = hasDuoToolbar ? View : SafeAreaView;
 
 type Props = {
   model: InstalledModel;
@@ -627,6 +629,7 @@ export function ChatScreen({ model, settings, gpuInfo, initialInput = '', onChan
               key={activeChat.id}
               ref={listRef}
               style={styles.flex}
+              automaticallyAdjustContentInsets={!hasDuoToolbar}
               contentContainerStyle={[styles.list, data.length === 0 && styles.emptyList]}
               keyboardShouldPersistTaps="handled"
               data={data}
@@ -643,7 +646,7 @@ export function ChatScreen({ model, settings, gpuInfo, initialInput = '', onChan
                   <View style={styles.welcomeMark} accessible={false}>
                     <Text style={styles.welcomeGlyph}>✦</Text>
                   </View>
-                  <Text style={styles.welcomeTitle} accessibilityRole="header">무엇을 도와드릴까요?</Text>
+                  <Text style={[styles.welcomeTitle, narrow && styles.narrowWelcomeTitle]} accessibilityRole="header">무엇을 도와드릴까요?</Text>
                   <Text style={styles.welcomeDescription}>
                     인터넷 연결 없이 대화할 수 있어요. 모든 대화는 이 기기 안에서 처리됩니다.
                   </Text>
@@ -781,9 +784,9 @@ export function ChatScreen({ model, settings, gpuInfo, initialInput = '', onChan
   return (
     <KeyboardAvoidingView style={styles.flex} behavior={Platform.OS === 'ios' && !hasDuoToolbar ? 'padding' : undefined}>
       <DuoToolbar busy={busy} onLibrary={openLibrary} onNewChat={() => newChat(activeChat.taskId)} onSettings={openSettings}>
-        <SafeAreaView style={styles.flex}>
+        <ChatContentArea style={styles.chatContent}>
           <FoldAwareArea>{renderWorkspace}</FoldAwareArea>
-        </SafeAreaView>
+        </ChatContentArea>
       </DuoToolbar>
 
       {showLibrary ? (
@@ -1150,6 +1153,7 @@ function PictureCard({ uri, size, caption, onOpen }: {
 
 const styles = StyleSheet.create({
   flex: { flex: 1 },
+  chatContent: { flex: 1, minWidth: 0, minHeight: 0, backgroundColor: colors.bg },
   workspace: { flex: 1, flexDirection: 'row' },
   sidebar: {
     borderRightWidth: 1,
@@ -1195,6 +1199,7 @@ const styles = StyleSheet.create({
   },
   welcomeGlyph: { fontSize: 32, color: colors.accentText },
   welcomeTitle: { color: colors.text, fontSize: 30, fontWeight: '800', letterSpacing: -0.9 },
+  narrowWelcomeTitle: { fontSize: 25 },
   welcomeDescription: { color: colors.muted, fontSize: 15, lineHeight: 23, maxWidth: 280, marginTop: 8 },
   shortcuts: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 18 },
   stackedShortcuts: { flexDirection: 'column', alignItems: 'stretch' },
