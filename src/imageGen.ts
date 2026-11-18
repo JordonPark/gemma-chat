@@ -58,11 +58,13 @@ const picturesDir = () => new Directory(Paths.document, 'pictures');
 
 /** 리소스 폴더(Unet.mlmodelc 가 있는 폴더)를 찾는다 */
 function findResourcesDir(d: Directory, depth = 0): Directory | null {
-  if (!d.exists || depth > 3) return null;
+  if (!d.exists || depth > 3 || d.name === '__MACOSX') return null;
   const entries = d.list();
-  if (entries.some((e) => e instanceof Directory && /^Unet(Chunk1)?\.mlmodelc$/.test(e.name))) return d;
+  const unet = entries.find((e): e is Directory => e instanceof Directory && /^Unet(Chunk1)?\.mlmodelc$/.test(e.name));
+  // 진짜 모델 폴더인지: Unet 가중치가 있어야 한다 (macOS 가 zip 에 넣는 __MACOSX 사본 등은 건너뜀)
+  if (unet && new File(unet, 'weights', 'weight.bin').exists) return d;
   for (const e of entries) {
-    if (e instanceof Directory && !e.name.endsWith('.mlmodelc')) {
+    if (e instanceof Directory && !e.name.endsWith('.mlmodelc') && e.name !== '__MACOSX') {
       const r = findResourcesDir(e, depth + 1);
       if (r) return r;
     }
@@ -161,6 +163,7 @@ export async function downloadImageModel(onProgress: OnProgress, signal: AbortSi
     sub.remove();
   }
   zip.delete();
+  for (const e of dir.list()) if (e instanceof Directory && e.name === '__MACOSX') e.delete();
   trimImageModel();
   const res = findInstalledImageModel();
   if (!res) {
