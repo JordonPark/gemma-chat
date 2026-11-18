@@ -90,13 +90,14 @@ jobs:
           License: CreativeML OpenRAIL-M. Use must follow the license's use-based restrictions
           (https://huggingface.co/spaces/CompVis/stable-diffusion-license).
           TXT
+          python3 ../tools/package_model_licenses.py drawing ../dist
           ls -l ../dist
           echo "::notice title=sd.json::$(tr -d '\n' < ../dist/sd.json)"
 
       - name: Upload to GitHub Release
         run: |
           # 모델 zip 을 먼저 올리고 sd.json 은 마지막에 바꾼다
-          gh release upload "$TAG" dist/"$ASSET".part* dist/NOTICE-SD.txt dist/sd-*.json --clobber --repo "$GITHUB_REPOSITORY"
+          gh release upload "$TAG" dist/"$ASSET".part* dist/NOTICE-SD.txt dist/sd-*.json dist/CreativeML-OpenRAIL-M.txt --clobber --repo "$GITHUB_REPOSITORY"
           gh release upload "$TAG" dist/sd.json --clobber --repo "$GITHUB_REPOSITORY"
           # 한 덩어리로 올렸던 이전(잘못된) 파일은 지운다
           gh release delete-asset "$TAG" "$ASSET" --yes --repo "$GITHUB_REPOSITORY" || true

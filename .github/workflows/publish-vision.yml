@@ -44,6 +44,7 @@ jobs:
           SIZE=$(stat -c %s "dist/$NAME")
           SHA=$(sha256sum "dist/$NAME" | cut -d' ' -f1)
           printf '{\n  "format": 1,\n  "name": "%s",\n  "size": %s,\n  "sha256": "%s"\n}\n' "$NAME" "$SIZE" "$SHA" > dist/vision.json
+          python3 tools/package_model_licenses.py gemma dist
           cat dist/vision.json
 
       - name: Upload to GitHub Release

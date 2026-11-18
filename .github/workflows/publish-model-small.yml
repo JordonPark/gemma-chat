@@ -65,6 +65,7 @@ jobs:
           (ai.google.dev/gemma/prohibited_use_policy).
           EOF
           cp work/manifest-f16embd.json dist/
+          python3 tools/package_model_licenses.py gemma dist
           ls -l dist
           echo "::notice title=manifest::$(tr -d '\n' < dist/manifest.json | cut -c1-400)"
 

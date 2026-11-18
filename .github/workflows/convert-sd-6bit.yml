@@ -182,7 +182,13 @@ jobs:
           json.dump({"format": 2, "id": "$MODEL_ID", "name": "$ASSET", "size": $SIZE, "sha256": "$SHA", "parts": parts,
                      "model": "$MODEL_DESC", "license": "CreativeML OpenRAIL-M"}, open("dist/sd.json", "w"), indent=2)
           PY
+          cat > dist/NOTICE-SD.txt <<'TXT'
+          Counterfeit-V3.0 (gsdf) was converted to Core ML. The UNet, text encoder and safety checker were palettized to six bits.
+          VAE remains in full precision. The model and derivatives remain subject to CreativeML OpenRAIL-M and its use restrictions.
+          Source: https://huggingface.co/gsdf/Counterfeit-V3.0
+          TXT
+          python3 tools/package_model_licenses.py drawing dist
           cp "sd-$OLD_ID.json" dist/
           echo "::notice title=sd.json::$(tr -d '\n' < dist/sd.json)"
-          gh release upload "$TAG" dist/"$ASSET".part* dist/sd-*.json --clobber --repo "$GITHUB_REPOSITORY"
+          gh release upload "$TAG" dist/"$ASSET".part* dist/sd-*.json dist/CreativeML-OpenRAIL-M.txt dist/NOTICE-SD.txt --clobber --repo "$GITHUB_REPOSITORY"
           gh release upload "$TAG" dist/sd.json --clobber --repo "$GITHUB_REPOSITORY"
