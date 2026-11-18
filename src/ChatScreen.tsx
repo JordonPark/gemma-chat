@@ -30,7 +30,6 @@ import { UpdateBanner, checkForUpdateInteractive, describeAppVersion } from './U
 import { loadChat, saveChat } from './storage';
 import { colors } from './theme';
 import { describeVision, useVision, type VisionStatus } from './useVision';
-import { VerifyScreen } from './VerifyScreen';
 import { deleteImages, pickImage, type ImageSource } from './vision';
 
 const uid = () => `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
@@ -50,7 +49,6 @@ export function ChatScreen({ model, settings, gpuInfo, onChangeSettings, onRemov
   const [streaming, setStreaming] = useState<string | null>(null);
   const [stats, setStats] = useState<GenStats | null>(null);
   const [showSettings, setShowSettings] = useState(false);
-  const [showVerify, setShowVerify] = useState(false);
   const [pendingImage, setPendingImage] = useState<string | null>(null);
   const listRef = useRef<FlatList<ChatMessage>>(null);
   const vision = useVision(settings);
@@ -130,9 +128,6 @@ export function ChatScreen({ model, settings, gpuInfo, onChangeSettings, onRemov
             {stats ? ` · ${stats.tokPerSec.toFixed(1)} tok/s` : ''}
           </Text>
         </View>
-        <Pressable onPress={() => setShowVerify(true)} style={styles.hBtn} disabled={busy}>
-          <Text style={styles.hBtnText}>인증</Text>
-        </Pressable>
         <Pressable onPress={newChat} style={styles.hBtn} disabled={busy}>
           <Text style={styles.hBtnText}>새 대화</Text>
         </Pressable>
@@ -203,13 +198,6 @@ export function ChatScreen({ model, settings, gpuInfo, onChangeSettings, onRemov
           </Pressable>
         )}
       </View>
-
-      <VerifyScreen
-        visible={showVerify}
-        onClose={() => setShowVerify(false)}
-        ensureVision={vision.ensureReady}
-        chatBusy={busy}
-      />
 
       <SettingsModal
         visible={showSettings}
@@ -308,7 +296,7 @@ function SettingsModal({
 
         <View style={styles.switchRow}>
           <View style={styles.flex}>
-            <Text style={styles.label}>이미지 인식 (사진 첨부 · 인증)</Text>
+            <Text style={styles.label}>이미지 인식 (사진 첨부)</Text>
             <Text style={styles.hint}>
               상태: {describeVision(visionStatus)}. 메모리를 약 1GB 더 씁니다. 앱이 꺼지면 끄세요.
             </Text>
