@@ -19,6 +19,7 @@ struct SdGenerateOptions: Record {
 public final class ExpoSdModule: Module {
   private var pipeline: StableDiffusionPipeline?
   private var loadedPath: String?
+  private var loadedGpu = false
   private var cancelRequested = false
   private let queue = DispatchQueue(label: "expo.sd.pipeline", qos: .userInitiated)
 
@@ -28,18 +29,20 @@ public final class ExpoSdModule: Module {
 
     /// 리소스 폴더(TextEncoder.mlmodelc, Unet.mlmodelc, VAEDecoder.mlmodelc, vocab.json, merges.txt …)로 파이프라인 준비.
     /// 처음 한 번은 Neural Engine 용으로 컴파일하느라 1~3분 걸릴 수 있다 (이후 iOS 가 캐시).
-    AsyncFunction("load") { (resourcesPath: String, promise: Promise) in
+    /// useGpu: Neural Engine 준비가 멈추는 기기를 위한 대안 (GPU 는 따로 컴파일하지 않아 빨리 뜨지만 그리기는 조금 느리다)
+    AsyncFunction("load") { (resourcesPath: String, useGpu: Bool?, promise: Promise) in
       self.queue.async {
         do {
           let path = ExpoSdModule.filePath(resourcesPath)
-          if self.loadedPath == path, self.pipeline != nil {
+          let gpu = useGpu ?? false
+          if self.loadedPath == path, self.loadedGpu == gpu, self.pipeline != nil {
             promise.resolve(nil)
             return
           }
           self.pipeline?.unloadResources()
           self.pipeline = nil
           let config = MLModelConfiguration()
-          config.computeUnits = .cpuAndNeuralEngine
+          config.computeUnits = gpu ? .cpuAndGPU : .cpuAndNeuralEngine
           let p = try StableDiffusionPipeline(
             resourcesAt: URL(fileURLWithPath: path),
             controlNet: [],
@@ -54,6 +57,7 @@ public final class ExpoSdModule: Module {
           try p.loadResources()
           self.pipeline = p
           self.loadedPath = path
+          self.loadedGpu = gpu
           promise.resolve(nil)
         } catch {
           promise.reject("ERR_SD_LOAD", "이미지 모델을 불러오지 못했습니다: \(error.localizedDescription)")

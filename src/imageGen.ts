@@ -100,7 +100,7 @@ export function trimImageModel() {
   const enc = new Directory(r, 'VAEEncoder.mlmodelc');
   if (enc.exists) enc.delete();
   for (const e of dir.list())
-    if (e instanceof File && e.name.startsWith('.') && e.name !== '.model.json' && e.name !== '.prepared') e.delete();
+    if (e instanceof File && e.name.startsWith('.') && !['.model.json', '.prepared', '.use-gpu'].includes(e.name)) e.delete();
 }
 
 /**
@@ -308,6 +308,45 @@ export type DrawStage = 'loading' | 'generating';
  * 영어 프롬프트로 그림을 만든다. 첫 실행은 Neural Engine 준비로 1~3분 더 걸린다.
  * 결과는 Documents/pictures/*.png 에 저장된다.
  */
+/**
+ * 네이티브 그림 모듈은 작업을 한 줄로 처리한다. 불러오기가 끝나지 않으면 뒤의 모든 요청이 그 뒤에서 영영 기다리므로,
+ * 시간 제한을 두고 넘기면 "막힘"으로 표시해 앱을 다시 켤 때까지 더 부르지 않는다 (화면이 멈춘 채로 남지 않게).
+ */
+let sdStuck = false;
+/** 이 기기에서 Neural Engine 준비가 한 번 멈췄으면 다음부터는 GPU 로 불러온다 (그림 모델을 새로 받으면 초기화) */
+const gpuFlagFile = () => new File(sdDir(), '.use-gpu');
+const useGpu = () => {
+  try {
+    return gpuFlagFile().exists;
+  } catch {
+    return false;
+  }
+};
+const STUCK_MSG =
+  '그림 모델이 응답하지 않습니다. 앱을 완전히 종료(화면 아래에서 위로 밀어 닫기)한 뒤 다시 열고 그려 주세요.\n' +
+  '다음부터는 다른 방식(GPU)으로 불러와 멈추지 않게 합니다. 그리는 속도는 조금 느려질 수 있습니다.';
+async function guardedLoad(path: string) {
+  if (sdStuck) throw new Error(STUCK_MSG);
+  const limitMs = (isImageModelPrepared() ? 3 : 10) * 60_000; // 처음 준비는 길게
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => {
+      sdStuck = true;
+      try {
+        if (!useGpu()) gpuFlagFile().create(); // 다음 실행부터 GPU 로
+      } catch {}
+      reject(new Error(STUCK_MSG));
+    }, limitMs);
+  });
+  try {
+    await Promise.race([loadImageModel(path, useGpu()), timeout]);
+  } finally {
+    clearTimeout(timer);
+  }
+  markPrepared();
+}
+const safeUnload = () => (sdStuck ? Promise.resolve() : unloadImageModel().catch(() => {}));
+
 /** 사람을 그리지 말아야 할 때 (음식·물건·동물·풍경) 더하는 negative */
 const NO_PEOPLE_NEGATIVE = '1girl, 1boy, girl, boy, woman, man, person, people, human, character, face, portrait, hands';
 
@@ -320,8 +359,7 @@ export async function drawPicture(
   const res = findInstalledImageModel();
   if (!res) throw new Error('그림 모델이 설치되어 있지 않습니다.');
   onStage('loading');
-  await loadImageModel(res);
-  markPrepared();
+  await guardedLoad(res);
   const dir = picturesDir();
   ensureDir(dir);
   const out = new File(dir, `${Date.now().toString(36)}.png`);
@@ -339,7 +377,7 @@ export async function drawPicture(
     );
     return r.uri;
   } finally {
-    await unloadImageModel().catch(() => {});
+    await safeUnload();
   }
 }
 
@@ -351,10 +389,9 @@ export async function prepareImageModel(): Promise<void> {
   const res = findInstalledImageModel();
   if (!res) throw new Error('그림 모델이 설치되어 있지 않습니다.');
   try {
-    await loadImageModel(res);
-    markPrepared();
+    await guardedLoad(res);
   } finally {
-    await unloadImageModel().catch(() => {});
+    await safeUnload();
   }
 }
 

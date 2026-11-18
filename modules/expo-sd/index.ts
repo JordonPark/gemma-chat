@@ -16,7 +16,7 @@ export type SdGenerateOptions = {
 };
 
 type NativeSd = {
-  load(resourcesPath: string): Promise<void>;
+  load(resourcesPath: string, useGpu?: boolean): Promise<void>;
   generate(options: SdGenerateOptions): Promise<{ uri: string; seed: number }>;
   cancel(): void;
   unload(): Promise<void>;
@@ -32,7 +32,9 @@ function need(): NativeSd {
   return native;
 }
 
-export const loadImageModel = (resourcesPath: string) => need().load(resourcesPath);
+/** useGpu: Neural Engine 대신 GPU 로 (Neural Engine 준비가 멈추는 경우의 대안) */
+export const loadImageModel = (resourcesPath: string, useGpu = false) =>
+  useGpu ? need().load(resourcesPath, true) : need().load(resourcesPath);
 export const unloadImageModel = () => (native ? native.unload() : Promise.resolve());
 export const cancelImageGen = () => native?.cancel();
 
