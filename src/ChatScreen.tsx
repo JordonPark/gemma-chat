@@ -22,6 +22,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { activateKeepAwakeAsync, deactivateKeepAwake } from 'expo-keep-awake';
 import {
+  DEFAULT_SETTINGS,
   checkGeneratedContent,
   generateReply,
   pickTool,
@@ -80,6 +81,25 @@ const DRAW_INTENT =
 
 /** 사진 설명이 걸려도 기기 분석 결과조차 보여 주면 안 되는 범주 */
 const SEVERE = new Set(['sexual_minors', 'sexual_explicit', 'violence', 'extremism', 'self_harm']);
+
+/** 설정의 "말투": 시스템 프롬프트를 셋 중에서 고른다 (첫 번째는 앱 기본값과 같다) */
+const TONE_PRESETS = [
+  {
+    label: '기본',
+    prompt: DEFAULT_SETTINGS.systemPrompt,
+    hint: '친절하고 정확하게, 알맞은 길이로 답합니다 (기본값).',
+  },
+  {
+    label: '간단하게',
+    prompt: '당신은 친절하고 정확한 AI 비서입니다. 핵심만 짧게 답하세요. 꼭 필요한 경우가 아니면 3문장 이내로 답하고, 여러 항목은 목록으로 정리하세요. 모르는 것은 모른다고 말하세요.',
+    hint: '핵심만 짧게 답합니다. 빠르게 확인할 때 좋아요.',
+  },
+  {
+    label: '자세하게',
+    prompt: '당신은 친근한 선생님 같은 AI 비서입니다. 쉬운 말로 자세히 설명하고, 필요하면 예시를 들어 단계별로 알려 주세요. 어려운 용어는 풀어서 설명하세요. 모르는 것은 모른다고 말하세요.',
+    hint: '선생님처럼 쉬운 말로 자세히, 예시를 들어 설명합니다. 공부할 때 좋아요.',
+  },
+] as const;
 
 /** 설정의 "답변 스타일": temperature (낮을수록 일정하고 정확, 높을수록 다양하고 창의적) */
 const STYLE_PRESETS = [
@@ -876,13 +896,26 @@ function SettingsModal({
           </Pressable>
         </View>
 
-        <Text style={styles.label}>시스템 프롬프트</Text>
-        <TextInput
-          style={[styles.field, { minHeight: 90 }]}
-          multiline
-          value={s.systemPrompt}
-          onChangeText={(v) => setS({ ...s, systemPrompt: v })}
-        />
+        <Text style={styles.label}>말투</Text>
+        <View style={styles.segment}>
+          {TONE_PRESETS.map((p) => {
+            const on = s.systemPrompt.trim() === p.prompt;
+            return (
+              <Pressable
+                key={p.label}
+                accessibilityRole="button"
+                accessibilityState={{ selected: on }}
+                onPress={() => setS({ ...s, systemPrompt: p.prompt })}
+                style={[styles.segmentItem, on && styles.segmentOn]}
+              >
+                <Text style={[styles.segmentText, on && styles.segmentTextOn]}>{p.label}</Text>
+              </Pressable>
+            );
+          })}
+        </View>
+        <Text style={styles.hint}>
+          {TONE_PRESETS.find((p) => s.systemPrompt.trim() === p.prompt)?.hint ?? '직접 정한 말투를 쓰는 중입니다. 위에서 고르면 바뀝니다.'}
+        </Text>
 
         <Text style={styles.label}>대화 길이</Text>
         <View style={styles.segment}>
