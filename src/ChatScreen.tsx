@@ -12,10 +12,12 @@ import {
   Switch,
   Text,
   TextInput,
+  useWindowDimensions,
   View,
 } from 'react-native';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { activateKeepAwakeAsync, deactivateKeepAwake } from 'expo-keep-awake';
+import * as Sharing from 'expo-sharing';
 import {
   generateIllustration,
   generateReply,
@@ -28,6 +30,11 @@ import {
   type GenStats,
   type Settings,
 } from './llm';
+import type { AreaSize } from '../modules/gemma-fold';
+import { FoldAwareArea } from './FoldAwareArea';
+import { getChatLayout, minInlineComposerWidth, type Division } from './foldLayout';
+import { cancelImageGen, deletePictures, drawPicture } from './imageGen';
+import { describeImageModel, useImageModel, type ImageModelStatus } from './useImageModel';
 import { formatBytes, type InstalledModel } from './modelStore';
 import { Markdown } from './Markdown';
 import { SvgCard } from './SvgCard';
@@ -37,9 +44,6 @@ import { colors } from './theme';
 import { describeVision, useVision, type VisionStatus } from './useVision';
 import { deleteImages, pickImage, type ImageSource } from './vision';
 import { isOcrAvailable, recognizeText } from '../modules/expo-ocr';
-import * as Sharing from 'expo-sharing';
-import { cancelImageGen, deletePictures, drawPicture } from './imageGen';
-import { describeImageModel, useImageModel, type ImageModelStatus } from './useImageModel';
 
 const uid = () => `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
 
@@ -52,7 +56,7 @@ type Props = {
 };
 
 export function ChatScreen({ model, settings, gpuInfo, onChangeSettings, onRemoveModel }: Props) {
-  const insets = useSafeAreaInsets();
+  const { fontScale } = useWindowDimensions();
   const [messages, setMessages] = useState<ChatMessage[]>(() => loadChat());
   const [input, setInput] = useState('');
   const [streaming, setStreaming] = useState<string | null>(null);
@@ -73,6 +77,7 @@ export function ChatScreen({ model, settings, gpuInfo, onChangeSettings, onRemov
   } | null>(null);
   const inputRef = useRef<ComponentRef<typeof TextInput>>(null);
   const listRef = useRef<FlatList<ChatMessage>>(null);
+  const followLatest = useRef(true);
   const vision = useVision(settings);
   const imageModel = useImageModel();
   const usePictureModel = imageModel.status.kind !== 'unsupported';
@@ -132,6 +137,7 @@ export function ChatScreen({ model, settings, gpuInfo, onChangeSettings, onRemov
    * 메모리를 위해 채팅 모델을 잠시 내렸다가, 다 그리면 다시 올린다.
    */
   const drawWithModel = async (d: string) => {
+    followLatest.current = true;
     setMessages((prev) => [...prev, { id: uid(), role: 'user', content: `🎨 ${d}` }]);
     setInput('');
     setStats(null);
@@ -181,6 +187,7 @@ export function ChatScreen({ model, settings, gpuInfo, onChangeSettings, onRemov
       if (!imageModel.ensureReady()) return;
       return drawWithModel(d);
     }
+    followLatest.current = true;
     setMessages((prev) => [...prev, { id: uid(), role: 'user', content: `🎨 ${d}` }]);
     setInput('');
     setStats(null);
@@ -206,6 +213,7 @@ export function ChatScreen({ model, settings, gpuInfo, onChangeSettings, onRemov
     const image = pendingImage;
     const text = (await ocrJob.current) ?? null;
     clearPending();
+    followLatest.current = true;
     setMessages((prev) => [
       ...prev,
       { id: uid(), role: 'user', content: '📝 사진 속 글자 읽기', image, ...(text ? { ocr: text } : {}) },
@@ -242,6 +250,7 @@ export function ChatScreen({ model, settings, gpuInfo, onChangeSettings, onRemov
       if (vision.status.kind !== 'ready' && !ocr && !vision.ensureReady()) return;
     }
     const history = [...messages, userMsg];
+    followLatest.current = true;
     setMessages(history);
     setInput('');
     clearPending();
@@ -262,6 +271,7 @@ export function ChatScreen({ model, settings, gpuInfo, onChangeSettings, onRemov
 
   const newChat = () => {
     if (busy) return;
+    followLatest.current = true;
     setMessages([]);
     setStats(null);
     clearPending();
@@ -277,214 +287,327 @@ export function ChatScreen({ model, settings, gpuInfo, onChangeSettings, onRemov
         ? [...messages, { id: '__drawing__', role: 'assistant', content: '', svg: drawing.svg ?? '' }]
         : messages;
 
-  return (
-    <KeyboardAvoidingView
-      style={[styles.flex, { paddingTop: insets.top }]}
-      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-    >
-      <View style={styles.header}>
-        <View style={styles.brandMark} accessible={false}>
-          <Text style={styles.brandGlyph}>✦</Text>
-        </View>
-        <View style={styles.flex}>
-          <Text style={styles.title}>Gemma Chat</Text>
-          <Text style={styles.subtitle} numberOfLines={1}>
-            Gemma 3 4B · {gpuInfo}
-            {stats ? ` · ${stats.tokPerSec.toFixed(1)} tok/s` : ''}
-          </Text>
-        </View>
-        <Pressable onPress={newChat} style={styles.hBtn} disabled={busy}>
-          <Text style={styles.hBtnText}>새 대화</Text>
-        </Pressable>
-        <Pressable onPress={() => setShowSettings(true)} style={styles.hBtn} disabled={busy}>
-          <Text style={styles.hBtnText}>설정</Text>
-        </Pressable>
-      </View>
+  const openSettings = () => setShowSettings(true);
+  const draftIllustration = () => {
+    if (!input.trim()) setInput('별빛이 비치는 바닷가를 그려줘');
+    inputRef.current?.focus();
+  };
+  const scrollToLatest = () => {
+    if (followLatest.current && data.length > 0) listRef.current?.scrollToEnd({ animated: false });
+  };
 
-      <UpdateBanner busy={busy} />
-      <VisionDownloadBar status={vision.status} onCancel={vision.cancelDownload} />
-      {imageModel.status.kind === 'downloading' ? (
-        <View style={styles.dlBar}>
-          <View style={styles.flex}>
-            <Text style={styles.dlText} numberOfLines={1}>
-              그림 모델 {describeImageModel(imageModel.status)}
-            </Text>
-            <View style={styles.dlTrack}>
-              <View style={[styles.dlFill, { width: `${Math.round((imageModel.status.progress?.ratio ?? 0) * 100)}%` }]} />
-            </View>
-          </View>
-          <Pressable onPress={imageModel.cancelDownload} style={styles.hBtn}>
-            <Text style={[styles.hBtnText, { color: colors.danger }]}>취소</Text>
-          </Pressable>
-        </View>
-      ) : null}
+  const renderWorkspace = (size: AreaSize, division: Division | null) => {
+    const layout = getChatLayout(size, division, !!pendingImage, fontScale);
+    const showSidebar = layout.sidebarWidth > 0;
+    const splitTranscript = layout.transcriptHeight !== undefined;
+    const paneWidth = size.width - layout.sidebarWidth - layout.sidebarGap
+      - (layout.insets.left ?? 0) - (layout.insets.right ?? 0);
+    const narrow = paneWidth > 0 && paneWidth < 340;
+    const stackComposer = paneWidth > 0 && paneWidth < minInlineComposerWidth(fontScale);
+    const mediaSize = Math.min(260, Math.max(96, (paneWidth || 350) * 0.78 - 48));
+    const composerHeight = size.height - (layout.transcriptHeight ?? 0) - layout.foldGap;
+    const inputHeight = splitTranscript
+      ? Math.min(120, Math.max(44, composerHeight - (pendingImage ? 86 : 28) - (stackComposer ? 48 : 0)))
+      : 120;
 
-      <FlatList
-        ref={listRef}
-        style={styles.flex}
-        contentContainerStyle={[styles.list, data.length === 0 && styles.emptyList]}
-        keyboardShouldPersistTaps="handled"
-        data={data}
-        keyExtractor={(m) => m.id}
-        onContentSizeChange={() => listRef.current?.scrollToEnd({ animated: false })}
-        ListEmptyComponent={
-          <View style={styles.welcome}>
-            <View style={styles.welcomeMark} accessible={false}>
-              <Text style={styles.welcomeGlyph}>✦</Text>
-            </View>
-            <Text style={styles.welcomeTitle}>무엇을 도와드릴까요?</Text>
-            <Text style={styles.welcomeDescription}>
-              인터넷 없이 대화해 보세요. 모든 대화는 이 기기 안에서 처리됩니다.
-            </Text>
-            <View style={styles.shortcuts}>
-              <Pressable accessibilityRole="button" style={styles.shortcut} onPress={attach}>
-                <Text style={styles.shortcutIcon}>📷</Text>
-                <Text style={styles.shortcutTitle}>사진으로 질문</Text>
-                <Text style={styles.shortcutDescription}>사진을 첨부해 물어보세요.</Text>
-              </Pressable>
+    return (
+      <View style={[styles.workspace, {
+        paddingLeft: layout.insets.left,
+        paddingRight: layout.insets.right,
+        paddingTop: layout.insets.top,
+        paddingBottom: layout.insets.bottom,
+      }]}>
+        {showSidebar ? (
+          <View style={[styles.sidebar, { width: layout.sidebarWidth, marginRight: layout.sidebarGap }]}>
+            <ScrollView contentContainerStyle={styles.sidebarContent} keyboardShouldPersistTaps="handled">
+              <View style={styles.identity}>
+                <BrandMark />
+                <View style={styles.flex}>
+                  <Text style={styles.title} accessibilityRole="header">Gemma Chat</Text>
+                  <Text style={styles.subtitle}>오프라인 AI</Text>
+                </View>
+              </View>
               <Pressable
                 accessibilityRole="button"
-                style={styles.shortcut}
-                onPress={() => {
-                  if (!input.trim()) setInput('별빛이 비치는 바닷가를 그려줘');
-                  inputRef.current?.focus();
-                }}
+                onPress={newChat}
+                disabled={busy}
+                style={[styles.sidebarPrimary, busy && styles.off]}
               >
-                <Text style={styles.shortcutIcon}>🎨</Text>
-                <Text style={styles.shortcutTitle}>일러스트 그리기</Text>
-                <Text style={styles.shortcutDescription}>그림을 설명하고 🎨를 누르세요.</Text>
+                <Text style={styles.sendText}>＋ 새 대화</Text>
               </Pressable>
-            </View>
+              <View style={styles.sidebarActions}>
+                <ChatAction icon="📷" label="사진으로 질문" onPress={attach} disabled={busy} />
+                <ChatAction icon="🎨" label="일러스트 그리기" onPress={draftIllustration} disabled={busy} />
+                <ChatAction icon="⚙" label="설정" onPress={openSettings} disabled={busy} />
+              </View>
+              <View style={styles.modelInfo}>
+                <Text style={styles.shortcutTitle}>Gemma 3 4B</Text>
+                <Text style={styles.subtitle}>
+                  {gpuInfo}{stats ? ` · ${stats.tokPerSec.toFixed(1)} tok/s` : ''}
+                </Text>
+              </View>
+            </ScrollView>
           </View>
-        }
-        renderItem={({ item }) => (
-          <View style={[styles.bubble, item.role === 'user' ? styles.userBubble : styles.botBubble]}>
-            {item.id === '__drawing__' && drawing?.phase ? (
-              <View style={styles.drawProgress}>
-                <Text style={styles.msg}>🎨 {drawing.phase}</Text>
-                {drawing.progress != null ? (
-                  <View style={styles.dlTrack}>
-                    <View style={[styles.dlFill, { width: `${Math.round(drawing.progress * 100)}%` }]} />
-                  </View>
+        ) : null}
+        <View style={styles.conversation}>
+          <View style={splitTranscript ? { height: layout.transcriptHeight, overflow: 'hidden' } : styles.transcript}>
+            <View style={styles.header}>
+              {!showSidebar ? <BrandMark /> : null}
+              <View style={styles.flex}>
+                <Text style={styles.title} accessibilityRole="header" numberOfLines={1}>
+                  {showSidebar ? '대화' : 'Gemma Chat'}
+                </Text>
+                {!showSidebar ? (
+                  <Text style={styles.subtitle} numberOfLines={1}>
+                    Gemma 3 4B · {gpuInfo}
+                    {stats ? ` · ${stats.tokPerSec.toFixed(1)} tok/s` : ''}
+                  </Text>
                 ) : null}
               </View>
-            ) : item.id === '__drawing__' && drawing ? (
-              drawing.svg ? (
-                <SvgCard svg={drawing.svg} live caption={`그리는 중… (${drawing.chars}자)`} />
-              ) : (
-                <Text style={styles.msg}>🎨 그림을 구상하는 중… ({drawing.chars}자)</Text>
-              )
-            ) : item.role === 'assistant' && item.picture ? (
-              <PictureCard uri={item.picture} caption={item.content.replace(/^\[그림: (.*)\]$/, '$1')} />
-            ) : item.role === 'assistant' && item.svg ? (
-              <SvgCard svg={item.svg} caption={item.content.replace(/^\[일러스트: (.*)\]$/, '$1')} />
-            ) : item.role === 'assistant' ? (
-              <Markdown text={item.content} />
-            ) : (
-              <>
-                {item.image ? <Image source={{ uri: item.image }} style={styles.msgImage} resizeMode="cover" /> : null}
-                <Text selectable style={[styles.msg, styles.userText]}>
-                  {item.content}
-                </Text>
-              </>
-            )}
+              {!showSidebar ? (
+                <>
+                  <Pressable
+                    accessibilityRole="button"
+                    accessibilityLabel="새 대화"
+                    onPress={newChat}
+                    style={[styles.hBtn, busy && styles.off]}
+                    disabled={busy}
+                  >
+                    <Text style={styles.hBtnText}>{narrow ? '＋' : '새 대화'}</Text>
+                  </Pressable>
+                  <Pressable
+                    accessibilityRole="button"
+                    accessibilityLabel="설정"
+                    onPress={openSettings}
+                    style={[styles.hBtn, busy && styles.off]}
+                    disabled={busy}
+                  >
+                    <Text style={styles.hBtnText}>{narrow ? '⚙' : '설정'}</Text>
+                  </Pressable>
+                </>
+              ) : null}
+            </View>
+
+            <UpdateBanner busy={busy} />
+            <VisionDownloadBar status={vision.status} onCancel={vision.cancelDownload} />
+            {imageModel.status.kind === 'downloading' ? (
+              <View style={styles.dlBar}>
+                <View style={styles.flex}>
+                  <Text style={styles.dlText} numberOfLines={1}>
+                    그림 모델 {describeImageModel(imageModel.status)}
+                  </Text>
+                  <View style={styles.dlTrack}>
+                    <View style={[styles.dlFill, { width: `${Math.round((imageModel.status.progress?.ratio ?? 0) * 100)}%` }]} />
+                  </View>
+                </View>
+                <Pressable onPress={imageModel.cancelDownload} style={styles.hBtn}>
+                  <Text style={[styles.hBtnText, { color: colors.danger }]}>취소</Text>
+                </Pressable>
+              </View>
+            ) : null}
+
+            <FlatList
+              ref={listRef}
+              style={styles.flex}
+              contentContainerStyle={[styles.list, data.length === 0 && styles.emptyList]}
+              keyboardShouldPersistTaps="handled"
+              data={data}
+              keyExtractor={(m) => m.id}
+              maintainVisibleContentPosition={{ minIndexForVisible: 0 }}
+              onLayout={scrollToLatest}
+              onContentSizeChange={scrollToLatest}
+              onScroll={({ nativeEvent: { contentOffset, contentSize, layoutMeasurement } }) => {
+                followLatest.current = contentSize.height - layoutMeasurement.height - contentOffset.y < 48;
+              }}
+              scrollEventThrottle={32}
+              ListEmptyComponent={
+                <View style={styles.welcome}>
+                  <View style={styles.welcomeMark} accessible={false}>
+                    <Text style={styles.welcomeGlyph}>✦</Text>
+                  </View>
+                  <Text style={styles.welcomeTitle} accessibilityRole="header">무엇을 도와드릴까요?</Text>
+                  <Text style={styles.welcomeDescription}>
+                    인터넷 연결 없이 대화할 수 있어요. 모든 대화는 이 기기 안에서 처리됩니다.
+                  </Text>
+                  {!showSidebar ? (
+                    <View style={[styles.shortcuts, narrow && styles.stackedShortcuts]}>
+                      <ChatAction icon="📷" label="사진으로 질문" onPress={attach} />
+                      <ChatAction icon="🎨" label="일러스트 그리기" onPress={draftIllustration} />
+                    </View>
+                  ) : null}
+                </View>
+              }
+              renderItem={({ item }) => (
+                <View style={[styles.bubble, item.role === 'user' ? styles.userBubble : styles.botBubble]}>
+                  {item.id === '__drawing__' && drawing?.phase ? (
+                    <View style={styles.drawProgress}>
+                      <Text style={styles.msg}>🎨 {drawing.phase}</Text>
+                      {drawing.progress != null ? (
+                        <View style={styles.dlTrack}>
+                          <View style={[styles.dlFill, { width: `${Math.round(drawing.progress * 100)}%` }]} />
+                        </View>
+                      ) : null}
+                    </View>
+                  ) : item.id === '__drawing__' && drawing ? (
+                    drawing.svg ? (
+                      <SvgCard svg={drawing.svg} size={mediaSize} live caption={`그리는 중… (${drawing.chars}자)`} />
+                    ) : (
+                      <Text style={styles.msg}>🎨 그림을 구상하는 중… ({drawing.chars}자)</Text>
+                    )
+                  ) : item.role === 'assistant' && item.picture ? (
+                    <PictureCard uri={item.picture} size={mediaSize} caption={item.content.replace(/^\[그림: (.*)\]$/, '$1')} />
+                  ) : item.role === 'assistant' && item.svg ? (
+                    <SvgCard svg={item.svg} size={mediaSize} caption={item.content.replace(/^\[일러스트: (.*)\]$/, '$1')} />
+                  ) : item.role === 'assistant' ? (
+                    <Markdown text={item.content} />
+                  ) : (
+                    <>
+                      {item.image ? (
+                        <Image source={{ uri: item.image }} style={[styles.msgImage, { width: mediaSize, height: mediaSize }]} resizeMode="cover" />
+                      ) : null}
+                      <Text selectable style={[styles.msg, styles.userText]}>{item.content}</Text>
+                    </>
+                  )}
+                </View>
+              )}
+            />
           </View>
-        )}
-      />
 
-      {pendingImage ? (
-        <View style={styles.pending}>
-          <Image source={{ uri: pendingImage }} style={styles.pendingImage} />
-          <Text style={styles.pendingText} numberOfLines={2}>
-            {pendingOcr === undefined
-              ? '글자 읽는 중…'
-              : pendingOcr
-                ? `글자 ${pendingOcr.length}자 인식 · 질문을 적거나 그대로 전송`
-                : '사진 첨부됨 · 질문을 적거나 그대로 전송'}
-          </Text>
-          {isOcrAvailable() ? (
-            <Pressable onPress={readTextOnly} style={styles.pendingBtn} disabled={busy || pendingOcr === undefined}>
-              <Text style={styles.pendingBtnText}>글자 읽기</Text>
-            </Pressable>
-          ) : null}
-          <Pressable onPress={clearPending} style={styles.pendingX} accessibilityRole="button" accessibilityLabel="첨부 사진 제거">
-            <Text style={styles.pendingXText}>✕</Text>
-          </Pressable>
-        </View>
-      ) : null}
-
-      <View style={[styles.composer, { paddingBottom: Math.max(insets.bottom, 12) }]}>
-        <View style={styles.inputRow}>
-          <Pressable
-            style={[styles.attach, busy && styles.off]}
-            onPress={attach}
-            disabled={busy}
-            accessibilityRole="button"
-            accessibilityLabel="사진 첨부"
-          >
-            <Text style={styles.attachText}>📷</Text>
-          </Pressable>
-          <Pressable
-            style={[styles.attach, busy && styles.off]}
-            onPress={() => draw(input)}
-            disabled={busy}
-            accessibilityRole="button"
-            accessibilityLabel="일러스트 그리기"
-          >
-            <Text style={styles.attachText}>🎨</Text>
-          </Pressable>
-          <TextInput
-            ref={inputRef}
-            accessibilityLabel="메시지 입력"
-            style={styles.input}
-            value={input}
-            onChangeText={setInput}
-            placeholder="메시지 입력"
-            placeholderTextColor={colors.muted}
-            multiline
-            editable={!busy}
-          />
-          {busy ? (
-            <Pressable
-              style={[styles.send, { backgroundColor: colors.danger }]}
-              onPress={() => (drawing?.phase ? cancelImageGen() : stopGeneration())}
-            >
-              <Text style={styles.sendText}>중지</Text>
-            </Pressable>
-          ) : (
-            <Pressable style={[styles.send, !canSend && styles.off]} onPress={send} disabled={!canSend}>
-              <Text style={styles.sendText}>전송</Text>
-            </Pressable>
-          )}
+          <View style={splitTranscript ? [styles.lowerPane, { marginTop: layout.foldGap }] : styles.composerPane}>
+            <View style={styles.composer}>
+              {pendingImage ? (
+                <View style={styles.pending}>
+                  <Image source={{ uri: pendingImage }} style={styles.pendingImage} />
+                  <Text style={styles.pendingText} numberOfLines={2}>
+                    {pendingOcr === undefined
+                      ? '글자 읽는 중…'
+                      : pendingOcr
+                        ? `글자 ${pendingOcr.length}자 인식`
+                        : '사진 첨부됨'}
+                  </Text>
+                  {isOcrAvailable() ? (
+                    <Pressable
+                      accessibilityRole="button"
+                      onPress={readTextOnly}
+                      style={styles.pendingBtn}
+                      disabled={busy || pendingOcr === undefined}
+                    >
+                      <Text style={styles.pendingBtnText}>글자 읽기</Text>
+                    </Pressable>
+                  ) : null}
+                  <Pressable onPress={clearPending} style={styles.pendingX} accessibilityRole="button" accessibilityLabel="첨부 사진 제거">
+                    <Text style={styles.pendingXText}>✕</Text>
+                  </Pressable>
+                </View>
+              ) : null}
+              <View style={[styles.inputRow, stackComposer && styles.stackedInput]}>
+                <TextInput
+                  ref={inputRef}
+                  accessibilityLabel="메시지 입력"
+                  style={[styles.input, { maxHeight: inputHeight }]}
+                  value={input}
+                  onChangeText={setInput}
+                  placeholder="메시지 입력"
+                  placeholderTextColor={colors.muted}
+                  multiline
+                  editable={!busy}
+                />
+                <View style={styles.composerActions}>
+                  <Pressable
+                    style={[styles.attach, busy && styles.off]}
+                    onPress={attach}
+                    disabled={busy}
+                    accessibilityRole="button"
+                    accessibilityLabel="사진 첨부"
+                  >
+                    <Text style={styles.attachText}>📷</Text>
+                  </Pressable>
+                  <Pressable
+                    style={[styles.attach, busy && styles.off]}
+                    onPress={() => draw(input)}
+                    disabled={busy}
+                    accessibilityRole="button"
+                    accessibilityLabel="일러스트 그리기"
+                  >
+                    <Text style={styles.attachText}>🎨</Text>
+                  </Pressable>
+                  <Pressable
+                    accessibilityRole="button"
+                    style={[styles.send, busy && { backgroundColor: colors.danger }, !busy && !canSend && styles.off]}
+                    onPress={busy ? () => (drawing?.phase ? cancelImageGen() : stopGeneration()) : send}
+                    disabled={!busy && !canSend}
+                  >
+                    <Text style={styles.sendText}>{busy ? '중지' : '전송'}</Text>
+                  </Pressable>
+                </View>
+              </View>
+            </View>
+          </View>
         </View>
       </View>
+    );
+  };
 
-      <SettingsModal
-        visible={showSettings}
-        model={model}
-        settings={settings}
-        visionStatus={vision.status}
-        onDownloadVision={vision.download}
-        onRemoveVision={vision.remove}
-        imageModelStatus={imageModel.status}
-        onDownloadImageModel={imageModel.download}
-        onRemoveImageModel={imageModel.remove}
-        onClose={() => setShowSettings(false)}
-        onSave={(s) => {
-          setShowSettings(false);
-          onChangeSettings(s);
-        }}
-        onRemoveModel={() => {
-          setShowSettings(false);
-          onRemoveModel();
-        }}
-      />
+  return (
+    <KeyboardAvoidingView style={styles.flex} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+      <SafeAreaView style={styles.flex}>
+        <FoldAwareArea>{renderWorkspace}</FoldAwareArea>
+      </SafeAreaView>
+
+      {showSettings ? (
+        <SettingsModal
+          model={model}
+          settings={settings}
+          visionStatus={vision.status}
+          onDownloadVision={vision.download}
+          onRemoveVision={vision.remove}
+          imageModelStatus={imageModel.status}
+          onDownloadImageModel={imageModel.download}
+          onRemoveImageModel={imageModel.remove}
+          onClose={() => setShowSettings(false)}
+          onSave={(s) => {
+            setShowSettings(false);
+            onChangeSettings(s);
+          }}
+          onRemoveModel={() => {
+            setShowSettings(false);
+            onRemoveModel();
+          }}
+        />
+      ) : null}
     </KeyboardAvoidingView>
   );
 }
 
+function BrandMark() {
+  return (
+    <View style={styles.brandMark} accessible={false}>
+      <Text style={styles.brandGlyph}>✦</Text>
+    </View>
+  );
+}
+
+function ChatAction({ icon, label, disabled, onPress }: {
+  icon: string;
+  label: string;
+  disabled?: boolean;
+  onPress: () => void;
+}) {
+  return (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityLabel={label}
+      style={({ pressed }) => [styles.shortcut, (pressed || disabled) && styles.off]}
+      onPress={onPress}
+      disabled={disabled}
+    >
+      <Text style={styles.shortcutIcon}>{icon}</Text>
+      <Text style={styles.shortcutTitle}>{label}</Text>
+    </Pressable>
+  );
+}
+
 function SettingsModal({
-  visible,
   model,
   settings,
   visionStatus,
@@ -497,7 +620,6 @@ function SettingsModal({
   onSave,
   onRemoveModel,
 }: {
-  visible: boolean;
   model: InstalledModel;
   settings: Settings;
   visionStatus: VisionStatus;
@@ -511,12 +633,22 @@ function SettingsModal({
   onRemoveModel: () => void;
 }) {
   const [s, setS] = useState(settings);
-  useEffect(() => setS(settings), [settings, visible]);
   const num = (v: string, d: number) => (Number.isFinite(Number(v)) && v.trim() !== '' ? Number(v) : d);
 
   return (
-    <Modal visible={visible} animationType="slide" onRequestClose={onClose} presentationStyle="pageSheet">
-      <ScrollView style={{ backgroundColor: colors.bg }} contentContainerStyle={styles.settings}>
+    <Modal
+      animationType="slide"
+      onRequestClose={onClose}
+      presentationStyle="pageSheet"
+      supportedOrientations={['portrait', 'landscape']}
+    >
+      <ScrollView
+        style={styles.settingsBackground}
+        contentContainerStyle={styles.settings}
+        contentInsetAdjustmentBehavior="automatic"
+        automaticallyAdjustKeyboardInsets
+        keyboardShouldPersistTaps="handled"
+      >
         <Text style={styles.settingsTitle}>설정</Text>
 
         <Text style={styles.label}>시스템 프롬프트</Text>
@@ -656,7 +788,7 @@ function SettingsModal({
 }
 
 /** 기기에서 생성한 그림 카드: 크게 보기 + 저장·공유 */
-function PictureCard({ uri, caption }: { uri: string; caption?: string }) {
+function PictureCard({ uri, size, caption }: { uri: string; size: number; caption?: string }) {
   const share = async () => {
     try {
       if (!(await Sharing.isAvailableAsync())) {
@@ -670,9 +802,9 @@ function PictureCard({ uri, caption }: { uri: string; caption?: string }) {
   };
   return (
     <View style={{ gap: 8 }}>
-      <Image source={{ uri }} style={styles.picture} resizeMode="cover" />
+      <Image source={{ uri }} style={[styles.picture, { width: size, height: size }]} resizeMode="cover" />
       {caption ? <Text style={styles.hint}>{caption}</Text> : null}
-      <Pressable onPress={share} style={[styles.hBtn, { alignSelf: 'flex-start', minHeight: 36 }]}>
+      <Pressable onPress={share} style={[styles.hBtn, { alignSelf: 'flex-start', minHeight: 44 }]}>
         <Text style={styles.hBtnText}>저장 · 공유</Text>
       </Pressable>
     </View>
@@ -681,74 +813,155 @@ function PictureCard({ uri, caption }: { uri: string; caption?: string }) {
 
 const styles = StyleSheet.create({
   flex: { flex: 1 },
+  workspace: { flex: 1, flexDirection: 'row' },
+  sidebar: {
+    backgroundColor: colors.accentSoft,
+    borderTopRightRadius: 24,
+    borderBottomRightRadius: 24,
+    overflow: 'hidden',
+  },
+  sidebarContent: {
+    flexGrow: 1,
+    alignSelf: 'center',
+    width: '100%',
+    maxWidth: 278,
+    padding: 16,
+    gap: 16,
+  },
+  identity: { flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 6 },
+  sidebarPrimary: {
+    minHeight: 48,
+    backgroundColor: colors.accent,
+    borderRadius: 14,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  sidebarActions: { gap: 8 },
+  modelInfo: { marginTop: 'auto', paddingTop: 14, borderTopWidth: 1, borderTopColor: colors.border },
+  conversation: { flex: 1, minWidth: 0 },
+  transcript: { flex: 1, minHeight: 0 },
   header: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: 16,
-    paddingVertical: 10,
+    paddingHorizontal: 14,
+    paddingVertical: 6,
     backgroundColor: colors.card,
-    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomWidth: 1,
     borderBottomColor: colors.border,
-    gap: 8,
+    gap: 6,
   },
-  brandMark: { width: 38, height: 38, borderRadius: 13, backgroundColor: colors.accentSoft, alignItems: 'center', justifyContent: 'center' },
+  brandMark: {
+    width: 36,
+    height: 36,
+    borderRadius: 12,
+    backgroundColor: colors.accentSoft,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   brandGlyph: { fontSize: 23, color: colors.accentText },
-  title: { fontSize: 18, fontWeight: '700', color: colors.text },
+  title: { fontSize: 17, fontWeight: '800', color: colors.text },
   subtitle: { fontSize: 12, color: colors.muted, marginTop: 2 },
-  hBtn: { minHeight: 44, justifyContent: 'center', paddingHorizontal: 10, borderRadius: 13, backgroundColor: colors.accentSoft },
-  hBtnText: { color: colors.accentText, fontSize: 14, fontWeight: '600' },
-  list: { padding: 16, gap: 14, flexGrow: 1, width: '100%', maxWidth: 760, alignSelf: 'center' },
+  hBtn: {
+    minWidth: 44,
+    minHeight: 44,
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: 8,
+    borderRadius: 12,
+    backgroundColor: colors.accentSoft,
+  },
+  hBtnText: { color: colors.accentText, fontSize: 14, fontWeight: '700' },
+  list: { padding: 16, gap: 12, flexGrow: 1, width: '100%', maxWidth: 740, alignSelf: 'center' },
   emptyList: { justifyContent: 'center' },
-  welcome: { alignItems: 'center', alignSelf: 'center', width: '100%', maxWidth: 440, paddingVertical: 20 },
-  welcomeMark: { width: 76, height: 76, borderRadius: 26, backgroundColor: colors.accentSoft, alignItems: 'center', justifyContent: 'center', marginBottom: 20 },
-  welcomeGlyph: { fontSize: 44, color: colors.accentText },
-  welcomeTitle: { color: colors.text, textAlign: 'center', fontSize: 29, fontWeight: '800', letterSpacing: -0.8 },
-  welcomeDescription: { color: colors.muted, textAlign: 'center', fontSize: 15, lineHeight: 23, maxWidth: 270, marginTop: 9 },
-  shortcuts: { flexDirection: 'row', gap: 10, marginTop: 24, width: '100%' },
-  shortcut: { flex: 1, padding: 13, gap: 5, borderRadius: 18, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.card },
-  shortcutIcon: { fontSize: 21, marginBottom: 3 },
-  shortcutTitle: { fontWeight: '700', fontSize: 14, color: colors.text },
-  shortcutDescription: { fontSize: 12, lineHeight: 18, color: colors.muted },
+  welcome: { alignSelf: 'center', width: '100%', maxWidth: 430, paddingVertical: 12, paddingHorizontal: 6 },
+  welcomeMark: {
+    width: 58,
+    height: 58,
+    borderRadius: 19,
+    backgroundColor: colors.accentSoft,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 14,
+  },
+  welcomeGlyph: { fontSize: 32, color: colors.accentText },
+  welcomeTitle: { color: colors.text, fontSize: 30, fontWeight: '800', letterSpacing: -0.9 },
+  welcomeDescription: { color: colors.muted, fontSize: 15, lineHeight: 23, maxWidth: 280, marginTop: 8 },
+  shortcuts: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 18 },
+  stackedShortcuts: { flexDirection: 'column', alignItems: 'stretch' },
+  shortcut: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 9,
+    minHeight: 44,
+    paddingHorizontal: 10,
+    paddingVertical: 7,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.card,
+  },
+  shortcutIcon: { fontSize: 18, color: colors.accentText },
+  shortcutTitle: { fontWeight: '700', fontSize: 14, color: colors.text, flexShrink: 1 },
   bubble: { maxWidth: '88%', borderRadius: 20, paddingHorizontal: 14, paddingVertical: 12 },
   userBubble: { alignSelf: 'flex-end', borderBottomRightRadius: 6, backgroundColor: colors.userBubble },
   botBubble: {
     alignSelf: 'flex-start',
     borderBottomLeftRadius: 6,
     backgroundColor: colors.botBubble,
-    borderWidth: StyleSheet.hairlineWidth,
+    borderWidth: 1,
     borderColor: colors.border,
   },
   msg: { fontSize: 15, lineHeight: 22, color: colors.text },
   userText: { color: '#fff' },
-  composer: { paddingHorizontal: 12, paddingTop: 6, width: '100%', maxWidth: 760, alignSelf: 'center' },
+  composerPane: { backgroundColor: colors.bg },
+  lowerPane: {
+    flex: 1,
+    justifyContent: 'flex-end',
+    borderTopWidth: 1,
+    borderTopColor: colors.border,
+    backgroundColor: colors.accentSoft,
+  },
+  composer: {
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    width: '100%',
+    maxWidth: 740,
+    alignSelf: 'center',
+  },
   inputRow: {
     flexDirection: 'row',
     alignItems: 'flex-end',
     gap: 4,
     padding: 5,
-    borderRadius: 22,
+    borderRadius: 20,
     borderWidth: 1,
     borderColor: colors.border,
     backgroundColor: colors.card,
   },
+  stackedInput: { flexDirection: 'column', alignItems: 'stretch' },
   input: {
-    flex: 1,
-    maxHeight: 140,
+    flexGrow: 1,
+    flexShrink: 1,
+    minWidth: 0,
     minHeight: 44,
-    paddingHorizontal: 6,
+    paddingHorizontal: 10,
     paddingVertical: 10,
     fontSize: 15,
     color: colors.text,
   },
+  composerActions: { flexDirection: 'row', justifyContent: 'flex-end', gap: 4 },
   send: {
     backgroundColor: colors.accent,
     borderRadius: 12,
-    paddingHorizontal: 16,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
     minHeight: 44,
     alignItems: 'center',
     justifyContent: 'center',
   },
-  sendText: { color: '#fff', fontWeight: '600', fontSize: 15 },
+  sendText: { color: '#fff', fontWeight: '700', fontSize: 15, textAlign: 'center' },
   attach: {
     width: 44,
     minHeight: 44,
@@ -757,26 +970,27 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     backgroundColor: colors.accentSoft,
   },
-  attachText: { fontSize: 20 },
-  msgImage: { width: 220, height: 220, borderRadius: 10, marginBottom: 6 },
+  attachText: { fontSize: 18 },
+  msgImage: { borderRadius: 10, marginBottom: 8 },
   pending: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 10,
-    paddingHorizontal: 12,
-    paddingTop: 8,
-    borderTopWidth: StyleSheet.hairlineWidth,
-    borderTopColor: colors.border,
-    backgroundColor: colors.bg,
+    gap: 6,
+    marginBottom: 6,
+    padding: 5,
+    backgroundColor: colors.card,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: colors.border,
   },
-  pendingImage: { width: 52, height: 52, borderRadius: 8 },
+  pendingImage: { width: 44, height: 44, borderRadius: 8 },
   pendingText: { flex: 1, fontSize: 13, color: colors.muted },
-  pendingX: { padding: 8 },
-  pendingBtn: { paddingHorizontal: 10, paddingVertical: 6, borderRadius: 8, backgroundColor: colors.card },
+  pendingX: { width: 44, minHeight: 44, alignItems: 'center', justifyContent: 'center' },
+  pendingBtn: { minHeight: 44, justifyContent: 'center', paddingHorizontal: 8, borderRadius: 8, backgroundColor: colors.accentSoft },
   pendingBtnText: { color: colors.accentText, fontSize: 13, fontWeight: '600' },
   pendingXText: { fontSize: 16, color: colors.muted },
-  picture: { width: 280, height: 280, borderRadius: 14 },
-  drawProgress: { gap: 8, minWidth: 220 },
+  picture: { borderRadius: 14 },
+  drawProgress: { gap: 8 },
   dlBar: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -791,7 +1005,8 @@ const styles = StyleSheet.create({
   dlTrack: { height: 4, borderRadius: 2, backgroundColor: colors.border, overflow: 'hidden' },
   dlFill: { height: 4, backgroundColor: colors.accent },
   off: { opacity: 0.4 },
-  settings: { padding: 24, gap: 10 },
+  settingsBackground: { backgroundColor: colors.bg },
+  settings: { padding: 24, gap: 10, width: '100%', maxWidth: 600, alignSelf: 'center' },
   settingsTitle: { fontSize: 28, fontWeight: '800', color: colors.text, marginBottom: 8 },
   label: { fontSize: 14, fontWeight: '600', color: colors.text, marginTop: 8 },
   hint: { fontSize: 12, color: colors.muted },

@@ -4,7 +4,7 @@
  * (앱 아이콘을 누른 직후의 시스템 스플래시는 네이티브라 OTA 로 바뀌지 않는다)
  */
 import { useEffect, useRef } from 'react';
-import { Animated, Easing, StyleSheet, Text, View } from 'react-native';
+import { Animated, Easing, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { colors, isDark } from './theme';
 
 type Props = {
@@ -65,41 +65,43 @@ export function LoadingScreen({ pct, status, detail }: Props) {
 
   return (
     <Animated.View style={[styles.root, { opacity: fade }]}>
-      <View style={styles.center}>
-        <View style={styles.logoWrap}>
-          <Animated.View style={[styles.glow, { opacity: glow, transform: [{ scale }] }]} />
-          <Animated.View style={[styles.logo, { transform: [{ scale }] }]}>
-            <Text style={styles.logoMark}>✦</Text>
-          </Animated.View>
+      <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
+        <View style={styles.center}>
+          <View style={styles.logoWrap}>
+            <Animated.View style={[styles.glow, { opacity: glow, transform: [{ scale }] }]} />
+            <Animated.View style={[styles.logo, { transform: [{ scale }] }]}>
+              <Text style={styles.logoMark}>✦</Text>
+            </Animated.View>
+          </View>
+
+          <Text style={styles.title}>Gemma Chat</Text>
+          <Text style={styles.subtitle}>온디바이스 AI · 인터넷 없이 대화</Text>
+
+          <View style={styles.progressBlock}>
+            <View style={styles.track}>
+              {known ? (
+                <Animated.View style={[styles.fill, { width: fillWidth }]} />
+              ) : (
+                <Animated.View style={[styles.sweep, { transform: [{ translateX: sweepX }] }]} />
+              )}
+            </View>
+            <View style={styles.statusRow}>
+              <Text style={styles.status}>{status}</Text>
+              {known ? <Text style={styles.pct}>{Math.round(pct!)}%</Text> : null}
+            </View>
+            {detail ? (
+              <Text style={styles.detail} numberOfLines={1}>
+                {detail}
+              </Text>
+            ) : null}
+          </View>
         </View>
 
-        <Text style={styles.title}>Gemma Chat</Text>
-        <Text style={styles.subtitle}>온디바이스 AI · 인터넷 없이 대화</Text>
-
-        <View style={styles.progressBlock}>
-          <View style={styles.track}>
-            {known ? (
-              <Animated.View style={[styles.fill, { width: fillWidth }]} />
-            ) : (
-              <Animated.View style={[styles.sweep, { transform: [{ translateX: sweepX }] }]} />
-            )}
-          </View>
-          <View style={styles.statusRow}>
-            <Text style={styles.status}>{status}</Text>
-            {known ? <Text style={styles.pct}>{Math.round(pct!)}%</Text> : null}
-          </View>
-          {detail ? (
-            <Text style={styles.detail} numberOfLines={1}>
-              {detail}
-            </Text>
-          ) : null}
+        <View style={styles.footer}>
+          <Text style={styles.tip}>{tip}</Text>
+          <Text style={styles.model}>Gemma 3 4B · QAT Q4_0</Text>
         </View>
-      </View>
-
-      <View style={styles.footer}>
-        <Text style={styles.tip}>{tip}</Text>
-        <Text style={styles.model}>Gemma 3 4B · QAT Q4_0</Text>
-      </View>
+      </ScrollView>
     </Animated.View>
   );
 }
@@ -108,7 +110,8 @@ const LOGO = 96;
 
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: colors.bg, paddingHorizontal: 32 },
-  center: { flex: 1, alignItems: 'center', justifyContent: 'center' },
+  content: { flexGrow: 1, gap: 20, paddingVertical: 14 },
+  center: { flexGrow: 1, alignItems: 'center', justifyContent: 'center' },
   logoWrap: { width: LOGO * 1.8, height: LOGO * 1.8, alignItems: 'center', justifyContent: 'center' },
   glow: {
     position: 'absolute',
@@ -133,7 +136,7 @@ const styles = StyleSheet.create({
   logoMark: { color: '#fff', fontSize: 46, lineHeight: 54, fontWeight: '700' },
   title: { marginTop: 8, fontSize: 30, fontWeight: '800', color: colors.text, letterSpacing: -0.5 },
   subtitle: { marginTop: 6, fontSize: 15, color: colors.muted },
-  progressBlock: { marginTop: 40, width: '100%', maxWidth: 320, gap: 10 },
+  progressBlock: { marginTop: 22, width: '100%', maxWidth: 320, gap: 10 },
   track: { height: 6, borderRadius: 3, backgroundColor: colors.border, overflow: 'hidden' },
   fill: { height: 6, borderRadius: 3, backgroundColor: colors.accent },
   sweep: { width: 120, height: 6, borderRadius: 3, backgroundColor: colors.accent },
@@ -141,7 +144,7 @@ const styles = StyleSheet.create({
   status: { fontSize: 14, color: colors.text, fontWeight: '600' },
   pct: { fontSize: 14, color: colors.muted, fontVariant: ['tabular-nums'] },
   detail: { fontSize: 12, color: colors.muted },
-  footer: { alignItems: 'center', gap: 6, paddingBottom: 40 },
+  footer: { alignItems: 'center', gap: 6 },
   tip: { fontSize: 13, color: colors.muted, textAlign: 'center' },
   model: { fontSize: 12, color: colors.muted, opacity: 0.7 },
 });

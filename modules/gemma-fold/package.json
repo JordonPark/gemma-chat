@@ -1,0 +1,8 @@
+{
+  "name": "gemma-fold",
+  "version": "1.0.0",
+  "description": "Reports active iOS display divisions to Gemma Chat",
+  "main": "index.ts",
+  "license": "MIT",
+  "private": true
+}

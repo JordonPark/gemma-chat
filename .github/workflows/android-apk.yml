@@ -24,7 +24,7 @@ on:
 
 concurrency:
   group: android-apk-fast-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: false  # 이미 진행 중인 APK 배포를 완료한 뒤 다음 빌드를 시작한다.
 
 permissions:
   contents: write

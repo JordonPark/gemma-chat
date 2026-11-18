@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Alert, Pressable, StyleSheet, Text, View } from 'react-native';
+import { Alert, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 import { ChatScreen } from './src/ChatScreen';
+import { FoldAwareArea } from './src/FoldAwareArea';
+import { getFoldInsets } from './src/foldLayout';
 import { LoadingScreen } from './src/LoadingScreen';
 import { SetupScreen } from './src/SetupScreen';
 import { loadModel, unloadModel, type Settings } from './src/llm';
@@ -82,11 +84,7 @@ export default function App() {
       body = <LoadingScreen status="준비 중" />;
       break;
     case 'setup':
-      body = (
-        <SafeAreaView style={styles.flex}>
-          <SetupScreen onInstalled={(m) => startModel(m, settings)} />
-        </SafeAreaView>
-      );
+      body = <SetupScreen onInstalled={(m) => startModel(m, settings)} />;
       break;
     case 'loading':
       body = (
@@ -136,7 +134,25 @@ export default function App() {
   return (
     <SafeAreaProvider>
       <View style={[styles.flex, { backgroundColor: colors.bg }]}>
-        {body}
+        {phase.kind === 'ready' ? body : (
+          <SafeAreaView style={styles.flex}>
+            <FoldAwareArea>
+              {(size, division) => {
+                const insets = getFoldInsets(size, division);
+                return (
+                  <View style={[styles.flex, {
+                    marginLeft: insets.left,
+                    marginRight: insets.right,
+                    marginTop: insets.top,
+                    marginBottom: insets.bottom,
+                  }]}>
+                    {body}
+                  </View>
+                );
+              }}
+            </FoldAwareArea>
+          </SafeAreaView>
+        )}
         <StatusBar style={isDark ? 'light' : 'dark'} />
       </View>
     </SafeAreaProvider>
@@ -144,12 +160,12 @@ export default function App() {
 }
 
 function Center({ children }: { children: React.ReactNode }) {
-  return <View style={styles.center}>{children}</View>;
+  return <ScrollView contentContainerStyle={styles.center}>{children}</ScrollView>;
 }
 
 const styles = StyleSheet.create({
   flex: { flex: 1 },
-  center: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: 12, padding: 24 },
+  center: { flexGrow: 1, alignItems: 'center', justifyContent: 'center', gap: 12, padding: 24 },
   text: { fontSize: 16, color: colors.text, textAlign: 'center' },
   muted: { fontSize: 13, color: colors.muted, textAlign: 'center' },
   btn: { backgroundColor: colors.accent, borderRadius: 10, paddingVertical: 12, paddingHorizontal: 18 },

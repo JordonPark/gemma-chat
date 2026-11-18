@@ -25,7 +25,7 @@ concurrency:
 
 jobs:
   build:
-    runs-on: macos-latest
+    runs-on: xcode-27  # iPhone Duo 접힘 영역 API는 iOS 27.1 SDK부터 제공
     timeout-minutes: 90
     env:
       CI: '1'
