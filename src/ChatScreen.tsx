@@ -69,6 +69,25 @@ type Props = {
   onModelReplaced: (m: InstalledModel) => void;
 };
 
+/** 그림 그리기 요청인지: "고양이 그려줘", "그림 만들어줘", "피자 사진을 기반으로 이미지 만들어줘", "배경화면 생성해줘" … */
+const DRAW_INTENT =
+  /(그려\s*(줘|주세요|주실|줄래|봐|줄\s*수)|(그림|일러스트|이미지|사진|삽화|짤|캐릭터|배경\s*화면|포스터|웹툰|만화)[^.?!\n]{0,15}(만들어|생성|그려))/;
+
+/**
+ * "사진을 기반으로", "이거로" 처럼 앞서 올린 사진을 가리키면, 그 사진에 대한 답(사진 설명)을 그림 구상에 함께 넘긴다.
+ * (그림 모델은 사진을 직접 보지 못하므로 설명을 바탕으로 비슷하게 그린다)
+ */
+function referencedPhoto(request: string, msgs: ChatMessage[]): string | undefined {
+  if (!/(사진|이미지|이거|그거|이걸|그걸|위에|방금|아까)/.test(request)) return undefined;
+  for (let i = msgs.length - 1; i >= 0; i--) {
+    if (msgs[i].role === 'user' && msgs[i].image) {
+      const reply = msgs.slice(i + 1).find((m) => m.role === 'assistant' && m.content && !m.picture);
+      return reply?.content.slice(0, 600);
+    }
+  }
+  return undefined;
+}
+
 export function ChatScreen({ model, settings, gpuInfo, onChangeSettings, onRemoveModel, onModelReplaced }: Props) {
   const { fontScale } = useWindowDimensions();
   const [messages, setMessages] = useState<ChatMessage[]>(() => loadChat());
@@ -215,7 +234,7 @@ export function ChatScreen({ model, settings, gpuInfo, onChangeSettings, onRemov
     await activateKeepAwakeAsync('draw');
     let unloaded = false;
     try {
-      const prompt = await makeImagePrompt(d);
+      const prompt = await makeImagePrompt(d, referencedPhoto(d, messages));
       phase('메모리 확보 중…');
       await unloadModel();
       unloaded = true;
@@ -383,8 +402,8 @@ export function ChatScreen({ model, settings, gpuInfo, onChangeSettings, onRemov
       }
       setMessages((prev) => prev.map((m) => (m.id === last.id ? { ...m, choices: undefined } : m)));
     }
-    // "…그려줘", "…그림 그려 주세요", "…일러스트 만들어줘" 는 그림 그리기로 보낸다 (사진 첨부가 없을 때)
-    if (!pendingImage && /(그려\s*(줘|주세요|줄래|봐)|그림\s*(을\s*)?(그려|만들어)|일러스트\s*(를\s*)?(그려|만들어))/.test(text)) {
+    // "…그려줘", "그림/이미지/사진 … 만들어줘" 는 그림 그리기로 보낸다 (사진 첨부가 없을 때)
+    if (!pendingImage && DRAW_INTENT.test(text)) {
       return draw(text);
     }
     const userMsg: ChatMessage = {

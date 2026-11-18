@@ -196,6 +196,11 @@ export async function generateReply(
         // 이미지 인식 없이 OCR 글자만으로 답하는 경우
         return { role: m.role, content: withOcr(`[사진 첨부 — 이미지는 볼 수 없고 글자만 제공됩니다] ${m.content}`, m.ocr) };
       }
+      // 그려 준 그림은 "[그림: …]" 형식을 그대로 넘기면 모델이 그 글자를 흉내 내므로 평범한 문장으로 바꿔 넘긴다
+      if (m.picture || m.svg) {
+        const what = m.content.replace(/^\[그림: (.*)\]$/, '$1');
+        return { role: m.role, content: `(앱이 "${what}" 그림을 그려서 보여 줬습니다.)` };
+      }
       return { role: m.role, content: m.image ? `[사진] ${m.content}` : m.content };
     }),
   ];
@@ -297,7 +302,7 @@ export async function generateIllustration(
 /**
  * 한국어 요청을 Stable Diffusion 용 영어 프롬프트(주제·자세·배경)로 바꾼다. 그림체 단어는 앱이 붙인다.
  */
-export async function makeImagePrompt(description: string): Promise<string> {
+export async function makeImagePrompt(description: string, photoContext?: string): Promise<string> {
   const c = ctx;
   if (!c) throw new Error('모델이 로드되지 않았습니다.');
   await c.clearCache(false);
@@ -308,6 +313,9 @@ export async function makeImagePrompt(description: string): Promise<string> {
         content: [
           'Rewrite this picture request as a Stable Diffusion prompt in English.',
           `Request (may be in Korean): ${description.trim()}`,
+          ...(photoContext
+            ? [`The request refers to a photo the user shared earlier. Description of that photo: ${photoContext.trim()}`]
+            : []),
           '',
           'Describe only what to draw: the main subject with 2-4 key visual details (colors, pose, expression, clothing), what it is doing, and the setting/background.',
           'Comma-separated phrases, 15 to 40 words. Do NOT mention art style, medium, quality or camera words (they are added automatically).',
