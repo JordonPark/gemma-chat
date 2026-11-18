@@ -38,6 +38,7 @@ import { ChatLibrary, type ChatScope } from './ChatLibrary';
 import { conversationName, hasConversationContent, makeConversation, removeTask, type ChatLibraryData, type ChatTask, type Conversation } from './conversationLibrary';
 import { DuoToolbar, hasDuoToolbar } from './DuoToolbar';
 import { FoldAwareArea } from './FoldAwareArea';
+import { FadeIn, PressableScale, Segmented, TypingDots, smoothLayout } from './motion';
 import { LeftDrawer } from './LeftDrawer';
 import { AnnotatedPhoto } from './AnnotatedPhoto';
 import { analysisHeader, analyzePhoto, needsTranslation, type PhotoAnalysis, type PhotoAnnotations } from './photoAnnotate';
@@ -121,6 +122,17 @@ export function ChatScreen({ settings, gpuInfo, initialInput = '', onChangeSetti
   const libraryRef = useRef(library);
   const activeChat = library.chats.find((chat) => chat.id === library.activeId)!;
   const { messages } = activeChat;
+  // 대화를 연 뒤 새로 생긴 말풍선만 부드럽게 나타나게 한다 (열 때 이미 있던 말풍선은 바로 보임)
+  const shownBubbles = useRef<{ chat: string; ids: Set<string> } | null>(null);
+  if (shownBubbles.current?.chat !== activeChat.id) {
+    shownBubbles.current = { chat: activeChat.id, ids: new Set(messages.map((m) => m.id)) };
+  }
+  const isNewBubble = (id: string) => {
+    const seen = shownBubbles.current!.ids;
+    if (seen.has(id)) return false;
+    seen.add(id);
+    return true;
+  };
   const activeTask = library.tasks.find((task) => task.id === activeChat.taskId);
   const [scope, setScope] = useState<ChatScope>(activeTask?.id);
   const [showLibrary, setShowLibrary] = useState(false);
@@ -232,6 +244,7 @@ export function ChatScreen({ settings, gpuInfo, initialInput = '', onChangeSetti
       try {
         const uri = await pickImage(src);
         if (uri) {
+          smoothLayout();
           setPendingImage(uri);
           startOcr(uri);
         }
@@ -639,6 +652,7 @@ export function ChatScreen({ settings, gpuInfo, initialInput = '', onChangeSetti
               }}
               scrollEventThrottle={32}
               ListEmptyComponent={
+                <FadeIn offset={14}>
                 <View style={styles.welcome}>
                   <View style={styles.welcomeMark} accessible={false}>
                     <Text style={styles.welcomeGlyph}>✦</Text>
@@ -653,8 +667,10 @@ export function ChatScreen({ settings, gpuInfo, initialInput = '', onChangeSetti
                     </View>
                   ) : null}
                 </View>
+                </FadeIn>
               }
               renderItem={({ item }) => (
+                <FadeIn animate={isNewBubble(item.id)}>
                 <View style={[styles.bubble, item.role === 'user' ? styles.userBubble : styles.botBubble]}>
                   {item.role === 'assistant' && item.picture ? (
                     <PictureCard
@@ -667,6 +683,12 @@ export function ChatScreen({ settings, gpuInfo, initialInput = '', onChangeSetti
                     <Text style={styles.hint}>
                       🖼 예전 버전에서 만든 도형 일러스트입니다. 그림 기능이 빠져 더 이상 표시하지 않습니다.
                     </Text>
+                  ) : item.id === '__streaming__' ? (
+                    // 답을 기다리는 동안: 지금 단계 + 물결치는 점 세 개
+                    <View style={styles.thinking}>
+                      <Text style={styles.msg}>{item.content.replace(/…$/, '').trim() || '생각하는 중'}</Text>
+                      <TypingDots />
+                    </View>
                   ) : item.role === 'assistant' ? (
                     <Markdown text={item.content} />
                   ) : (
@@ -703,6 +725,7 @@ export function ChatScreen({ settings, gpuInfo, initialInput = '', onChangeSetti
                       </Pressable>
                     ) : null}
                 </View>
+                </FadeIn>
               )}
             />
           </View>
@@ -747,7 +770,7 @@ export function ChatScreen({ settings, gpuInfo, initialInput = '', onChangeSetti
                       <Text style={styles.pendingBtnText}>글자 읽기</Text>
                     </Pressable>
                   ) : null}
-                  <Pressable onPress={clearPending} disabled={busy} style={styles.pendingX} accessibilityRole="button" accessibilityLabel="첨부 사진 제거">
+                  <Pressable onPress={() => { smoothLayout(); clearPending(); }} disabled={busy} style={styles.pendingX} accessibilityRole="button" accessibilityLabel="첨부 사진 제거">
                     <Text style={styles.pendingXText}>✕</Text>
                   </Pressable>
                 </View>
@@ -765,7 +788,7 @@ export function ChatScreen({ settings, gpuInfo, initialInput = '', onChangeSetti
                   editable={!busy}
                 />
                 <View style={styles.composerActions}>
-                  <Pressable
+                  <PressableScale
                     style={[styles.attach, busy && styles.off]}
                     onPress={attach}
                     disabled={busy}
@@ -773,15 +796,15 @@ export function ChatScreen({ settings, gpuInfo, initialInput = '', onChangeSetti
                     accessibilityLabel="사진 첨부"
                   >
                     <Text style={styles.attachText}>📷</Text>
-                  </Pressable>
-                  <Pressable
+                  </PressableScale>
+                  <PressableScale
                     accessibilityRole="button"
                     style={[styles.send, streaming !== null && { backgroundColor: colors.danger }, (workingWithPhoto || (!busy && !canSend)) && styles.off]}
                     onPress={streaming !== null ? stopGeneration : send}
                     disabled={workingWithPhoto || (!busy && !canSend)}
                   >
                     <Text style={styles.sendText}>{streaming !== null ? '중지' : '전송'}</Text>
-                  </Pressable>
+                  </PressableScale>
                 </View>
               </View>
             </View>
@@ -842,16 +865,16 @@ function ChatAction({ icon, label, disabled, onPress }: {
   onPress: () => void;
 }) {
   return (
-    <Pressable
+    <PressableScale
       accessibilityRole="button"
       accessibilityLabel={label}
-      style={({ pressed }) => [styles.shortcut, (pressed || disabled) && styles.off]}
+      style={[styles.shortcut, disabled && styles.off]}
       onPress={onPress}
       disabled={disabled}
     >
       <Text style={styles.shortcutIcon}>{icon}</Text>
       <Text style={styles.shortcutTitle}>{label}</Text>
-    </Pressable>
+    </PressableScale>
   );
 }
 
@@ -908,65 +931,32 @@ function SettingsModal({
       >
 
         <Text style={styles.label}>말투</Text>
-        <View style={styles.segment}>
-          {TONE_PRESETS.map((p) => {
-            const on = s.systemPrompt.trim() === p.prompt;
-            return (
-              <Pressable
-                key={p.label}
-                accessibilityRole="button"
-                accessibilityState={{ selected: on }}
-                onPress={() => setS({ ...s, systemPrompt: p.prompt })}
-                style={[styles.segmentItem, on && styles.segmentOn]}
-              >
-                <Text style={[styles.segmentText, on && styles.segmentTextOn]}>{p.label}</Text>
-              </Pressable>
-            );
-          })}
-        </View>
+        <Segmented
+          options={TONE_PRESETS.map((p) => p.label)}
+          selected={TONE_PRESETS.findIndex((p) => s.systemPrompt.trim() === p.prompt)}
+          onSelect={(i) => setS({ ...s, systemPrompt: TONE_PRESETS[i].prompt })}
+        />
         <Text style={styles.hint}>
           {TONE_PRESETS.find((p) => s.systemPrompt.trim() === p.prompt)?.hint ?? '직접 정한 말투를 쓰는 중입니다. 위에서 고르면 바뀝니다.'}
         </Text>
 
         <Text style={styles.label}>대화 길이</Text>
-        <View style={styles.segment}>
-          {LENGTH_PRESETS.map((p) => {
-            const on = s.nCtx === p.nCtx && s.maxNewTokens === p.maxNewTokens;
-            return (
-              <Pressable
-                key={p.label}
-                accessibilityRole="button"
-                accessibilityState={{ selected: on }}
-                onPress={() => setS({ ...s, nCtx: p.nCtx, maxNewTokens: p.maxNewTokens })}
-                style={[styles.segmentItem, on && styles.segmentOn]}
-              >
-                <Text style={[styles.segmentText, on && styles.segmentTextOn]}>{p.label}</Text>
-              </Pressable>
-            );
-          })}
-        </View>
+        <Segmented
+          options={LENGTH_PRESETS.map((p) => p.label)}
+          selected={LENGTH_PRESETS.findIndex((p) => s.nCtx === p.nCtx && s.maxNewTokens === p.maxNewTokens)}
+          onSelect={(i) => setS({ ...s, nCtx: LENGTH_PRESETS[i].nCtx, maxNewTokens: LENGTH_PRESETS[i].maxNewTokens })}
+        />
         <Text style={styles.hint}>
           {(LENGTH_PRESETS.find((p) => p.nCtx === s.nCtx && p.maxNewTokens === s.maxNewTokens)?.hint ??
             `직접 정한 값: 대화 기억 ${s.nCtx} · 답 최대 ${s.maxNewTokens} 토큰`) + ' 바꾸면 모델을 다시 불러옵니다.'}
         </Text>
 
         <Text style={styles.label}>답변 스타일</Text>
-        <View style={styles.segment}>
-          {STYLE_PRESETS.map((p) => {
-            const on = Math.abs(s.temperature - p.temperature) < 0.05;
-            return (
-              <Pressable
-                key={p.label}
-                accessibilityRole="button"
-                accessibilityState={{ selected: on }}
-                onPress={() => setS({ ...s, temperature: p.temperature })}
-                style={[styles.segmentItem, on && styles.segmentOn]}
-              >
-                <Text style={[styles.segmentText, on && styles.segmentTextOn]}>{p.label}</Text>
-              </Pressable>
-            );
-          })}
-        </View>
+        <Segmented
+          options={STYLE_PRESETS.map((p) => p.label)}
+          selected={STYLE_PRESETS.findIndex((p) => Math.abs(s.temperature - p.temperature) < 0.05)}
+          onSelect={(i) => setS({ ...s, temperature: STYLE_PRESETS[i].temperature })}
+        />
         <Text style={styles.hint}>
           {STYLE_PRESETS.find((p) => Math.abs(s.temperature - p.temperature) < 0.05)?.hint ??
             `직접 정한 값 (temperature ${s.temperature}).`}
@@ -1126,6 +1116,7 @@ const styles = StyleSheet.create({
     borderColor: colors.border,
   },
   msg: { fontSize: 15, lineHeight: 22, color: colors.text },
+  thinking: { flexDirection: 'row', alignItems: 'center', gap: 8, flexWrap: 'wrap' },
   userText: { color: '#fff' },
   toolChip: { marginTop: 6, fontSize: 12, lineHeight: 17, color: 'rgba(255,255,255,0.8)' },
   composerPane: { backgroundColor: colors.bg },
@@ -1245,20 +1236,6 @@ const styles = StyleSheet.create({
     maxWidth: 648,
     alignSelf: 'center',
   },
-  segment: {
-    flexDirection: 'row',
-    backgroundColor: colors.card,
-    borderRadius: 14,
-    borderWidth: 1,
-    borderColor: colors.border,
-    padding: 4,
-    gap: 4,
-    marginTop: 6,
-  },
-  segmentItem: { flex: 1, minHeight: 44, borderRadius: 10, alignItems: 'center', justifyContent: 'center' },
-  segmentOn: { backgroundColor: colors.accent },
-  segmentText: { fontSize: 15, fontWeight: '600', color: colors.text },
-  segmentTextOn: { color: '#fff' },
   settingsClose: {
     width: 40,
     height: 40,
@@ -1289,6 +1266,7 @@ function VisionDownloadBar({ status, onCancel }: { status: VisionStatus; onCance
   if (status.kind !== 'downloading') return null;
   const pct = Math.round((status.progress?.ratio ?? 0) * 100);
   return (
+    <FadeIn offset={-6}>
     <View style={styles.dlBar}>
       <View style={styles.flex}>
         <Text style={styles.dlText}>
@@ -1302,5 +1280,6 @@ function VisionDownloadBar({ status, onCancel }: { status: VisionStatus; onCance
         <Text style={[styles.hBtnText, { color: colors.danger }]}>취소</Text>
       </Pressable>
     </View>
+    </FadeIn>
   );
 }

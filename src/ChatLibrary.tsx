@@ -3,6 +3,7 @@ import { Alert, Animated, Easing, LayoutAnimation, Pressable, ScrollView, StyleS
 import { conversationName, hasConversationContent, type ChatLibraryData, type ChatTask, type Conversation } from './conversationLibrary';
 import { APP_NAME } from './storeConfig';
 import { colors } from './theme';
+import { smoothLayout } from './motion';
 
 // undefined: all chats, null: unassigned, string: a specific task
 export type ChatScope = string | null | undefined;
@@ -56,7 +57,7 @@ export function ChatLibrary({ library, scope, busy, onScope, onOpen, onNew, onTa
     setMenu(null);
   };
   const startEdit = (value: Editor) => { setMenu(null); setEditor(value); };
-  const selectScope = (next: ChatScope) => { closeTools(); onScope(next); };
+  const selectScope = (next: ChatScope) => { smoothLayout(); closeTools(); onScope(next); };
   const saveName = () => {
     if (!editor || !editor.name.trim() || busy) return;
     const name = editor.name.trim();

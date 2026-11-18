@@ -7,6 +7,7 @@
 import { useEffect, useState } from 'react';
 import { Image, Pressable, StyleSheet, Text, View } from 'react-native';
 import type { PhotoAnnotations } from './photoAnnotate';
+import { smoothLayout } from './motion';
 
 type Props = {
   uri: string;
@@ -63,12 +64,18 @@ export function AnnotatedPhoto({ uri, width, annot, translating, onOpen }: Props
       <View style={styles.chips}>
         {translating ? <Text style={styles.status}>사진 속 글자 번역 중…</Text> : null}
         {hasTranslation ? (
-          <Chip label={showTranslation ? '원문 보기' : '번역 보기'} onPress={() => setShowTranslation((v) => !v)} />
+          <Chip label={showTranslation ? '원문 보기' : '번역 보기'} onPress={() => {
+            smoothLayout(200);
+            setShowTranslation((v) => !v);
+          }} />
         ) : null}
         {annot.objects.length ? (
           <Chip
             label={showObjects ? `물건 표시 끄기 (${annot.objects.length})` : `물건 표시 (${annot.objects.length})`}
-            onPress={() => setShowObjects((v) => !v)}
+            onPress={() => {
+              smoothLayout(200);
+              setShowObjects((v) => !v);
+            }}
           />
         ) : null}
       </View>

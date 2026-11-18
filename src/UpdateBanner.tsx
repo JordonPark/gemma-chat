@@ -6,11 +6,13 @@
 import { Alert, Pressable, StyleSheet, Text, View } from 'react-native';
 import * as Updates from 'expo-updates';
 import { colors } from './theme';
+import { FadeIn } from './motion';
 
 export function UpdateBanner({ busy }: { busy: boolean }) {
   const { isUpdatePending } = Updates.useUpdates();
   if (!Updates.isEnabled || !isUpdatePending) return null;
   return (
+    <FadeIn offset={-6}>
     <View style={styles.banner}>
       <Text style={styles.text}>새 버전이 준비되었습니다.</Text>
       <Pressable
@@ -21,6 +23,7 @@ export function UpdateBanner({ busy }: { busy: boolean }) {
         <Text style={styles.btnText}>다시 시작</Text>
       </Pressable>
     </View>
+    </FadeIn>
   );
 }
 
