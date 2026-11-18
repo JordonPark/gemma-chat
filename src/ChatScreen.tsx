@@ -947,7 +947,7 @@ function SettingsModal({
             <Text style={styles.hint}>{describeImageModel(imageModelStatus)}</Text>
             {imageModelStatus.kind === 'missing' ? (
               <Pressable style={[styles.send, { marginTop: 8 }]} onPress={onDownloadImageModel}>
-                <Text style={styles.sendText}>그림 모델 받기 (약 1.6GB)</Text>
+                <Text style={styles.sendText}>그림 모델 받기 (약 2.7GB)</Text>
               </Pressable>
             ) : imageModelStatus.kind === 'ready' && imageModelUpdate ? (
               <Pressable style={[styles.send, { marginTop: 8 }]} onPress={onReplaceImageModel}>
@@ -957,7 +957,7 @@ function SettingsModal({
               <Pressable
                 style={[styles.send, { backgroundColor: colors.border, marginTop: 8 }]}
                 onPress={() =>
-                  Alert.alert('그림 모델 삭제', '약 1.6GB 를 비웁니다. 다시 그리려면 다시 받아야 합니다.', [
+                  Alert.alert('그림 모델 삭제', '약 2.7GB 를 비웁니다. 다시 그리려면 다시 받아야 합니다.', [
                     { text: '취소', style: 'cancel' },
                     { text: '삭제', style: 'destructive', onPress: onRemoveImageModel },
                   ])

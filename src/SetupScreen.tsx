@@ -17,7 +17,7 @@ import { downloadImageModel, findInstalledImageModel, isImageGenAvailable, prepa
 
 /** iPhone(그림 모델 지원)이면 처음 설치 때 그림 모델도 같이 받는다 */
 const WITH_IMAGE_MODEL = isImageGenAvailable();
-const SIZE_TEXT = WITH_IMAGE_MODEL ? '약 4.5GB: 채팅 2.4GB + 그림 2.1GB' : '약 2.4GB';
+const SIZE_TEXT = WITH_IMAGE_MODEL ? '약 5.1GB: 채팅 2.4GB + 그림 2.7GB' : '약 2.4GB';
 import { colors } from './theme';
 
 const STAGE_LABEL: Record<ImportProgress['stage'], string> = {
