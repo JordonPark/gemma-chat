@@ -3,7 +3,7 @@
  */
 import { Platform } from 'react-native';
 import { initLlama, type LlamaContext, type RNLlamaOAICompatibleMessage } from 'llama.rn';
-import { closePartialSvg, extractSvg, illustrationPrompt, sanitizeSvg } from './svg';
+import { SCENE_SCHEMA, parseScene, renderPartialScene, renderScene, scenePrompt } from './scene';
 
 export type Role = 'user' | 'assistant';
 /**
@@ -226,11 +226,12 @@ function stripStop(s: string) {
   return out;
 }
 
-// ───────────────────────── 일러스트 (SVG) ─────────────────────────
+// ───────────────────────── 일러스트 ─────────────────────────
 
 /**
- * 설명을 받아 Gemma 가 SVG 일러스트를 그린다. 그리는 중간중간 onPartial 로 그릴 수 있는 SVG 를 넘겨 준다.
- * 대화 기록과 섞이지 않게 단독 요청으로 처리한다.
+ * 설명을 받아 일러스트를 그린다.
+ * Gemma 는 부품 목록(JSON, 스키마로 강제: 12~45개)만 정하고, 앱(scene.ts)이 일정한 그림체로 그린다.
+ * 그리는 중간중간 onPartial 로 지금까지의 부품으로 그린 SVG 를 넘겨 준다.
  */
 export async function generateIllustration(
   description: string,
@@ -244,32 +245,32 @@ export async function generateIllustration(
   let lastEmit = 0;
   const res = await c.completion(
     {
-      messages: [{ role: 'user', content: illustrationPrompt(description) }],
+      messages: [{ role: 'user', content: scenePrompt(description) }],
       jinja: true,
-      n_predict: 2600,
-      temperature: 0.55, // 낮을수록 계획대로 차분하게 그린다
-      top_k: 64,
-      top_p: 0.95,
-      stop: [...STOP_WORDS, '</svg>'],
+      n_predict: 2400,
+      temperature: 0.5,
+      top_k: 40,
+      top_p: 0.9,
+      stop: STOP_WORDS,
+      response_format: { type: 'json_schema', json_schema: { strict: true, schema: SCENE_SCHEMA } },
     },
     (data) => {
       acc += data.token;
       const now = Date.now();
-      if (now - lastEmit < 400) return; // 미리보기는 0.4초마다
+      if (now - lastEmit < 300) return; // 미리보기는 0.3초마다
       lastEmit = now;
-      const p = closePartialSvg(acc);
-      onPartial(p ? sanitizeSvg(p) : null, acc.length);
+      onPartial(renderPartialScene(acc), acc.length);
     },
   );
   await c.clearCache(false);
 
-  let raw = stripStop(res.content || res.text || acc);
-  if (!/<\/svg>/i.test(raw)) raw += '</svg>'; // stop 단어로 잘린 닫는 태그 복구
-  const svg = extractSvg(raw);
+  const raw = stripStop(res.content || res.text || acc);
+  // 중지했거나 잘렸으면 완성된 부품까지만 그린다
+  const scene = parseScene(raw);
+  const svg = scene ? renderScene(scene) : renderPartialScene(raw);
   if (!svg) throw new Error('그림을 만들지 못했습니다. 설명을 조금 바꿔 다시 시도해 보세요.');
-  const closed = closePartialSvg(svg) ?? svg;
   return {
-    svg: sanitizeSvg(closed),
+    svg,
     stats: {
       tokens: res.timings?.predicted_n ?? 0,
       tokPerSec: res.timings?.predicted_per_second ?? 0,
