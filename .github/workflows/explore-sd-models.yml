@@ -1,0 +1,34 @@
+# 일회성 조사: Hugging Face 의 Core ML Stable Diffusion 저장소 파일 목록을 확인한다 (결과는 Actions 주석으로 남김)
+name: Explore SD models
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/explore-sd-models.yml'
+
+jobs:
+  list:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      HF_TOKEN: ${{ secrets.HF_TOKEN }}
+    steps:
+      - name: List repo files
+        run: |
+          for R in apple/coreml-stable-diffusion-v1-5-palettized apple/coreml-stable-diffusion-2-1-base-palettized apple/coreml-stable-diffusion-v1-5 apple/coreml-stable-diffusion-mixed-bit-palettization; do
+            J=$(curl -sS -H "Authorization: Bearer $HF_TOKEN" "https://huggingface.co/api/models/$R/tree/main?recursive=false")
+            L=$(echo "$J" | python3 -c "import json,sys
+          try:
+            d=json.load(sys.stdin)
+            if isinstance(d,dict): print('ERR', d.get('error')); raise SystemExit
+            print(' | '.join(f\"{x['path']}({round(x.get('size',0)/1e6)}MB,{x['type'][0]})\" for x in d))
+          except SystemExit: pass
+          except Exception as e: print('ERR', e)")
+            META=$(curl -sS -H "Authorization: Bearer $HF_TOKEN" "https://huggingface.co/api/models/$R" | python3 -c "import json,sys
+          try:
+            d=json.load(sys.stdin); print('gated=',d.get('gated'),'license=',(d.get('cardData') or {}).get('license'))
+          except Exception as e: print('ERR',e)")
+            echo "::notice title=$R::$META :: $L"
+          done
