@@ -44,6 +44,7 @@ import {
   cancelImageGen,
   deletePictures,
   drawPicture,
+  isImageModelPrepared,
   getDrawStyle,
   prepareImageModel,
   type DrawStyle,
@@ -252,11 +253,34 @@ export function ChatScreen({ model, settings, gpuInfo, initialInput = '', onChan
       phase('메모리 확보 중…');
       await unloadModel();
       unloaded = true;
-      const uri = await drawPicture(prompt, style, people, (stage, p) =>
-        stage === 'loading'
-          ? phase('그림 모델 불러오는 중…')
-          : phase(`그리는 중 ${p?.step ?? 0}/${p?.stepCount ?? 25}`, p ? p.step / Math.max(1, p.stepCount) : 0),
-      );
+      // 모델 불러오기는 진행률이 없으므로 경과 시간을 보여 준다 (멈춘 게 아니라는 표시)
+      const firstTime = !isImageModelPrepared();
+      let loadTimer: ReturnType<typeof setInterval> | null = null;
+      const stopTimer = () => {
+        if (loadTimer) clearInterval(loadTimer);
+        loadTimer = null;
+      };
+      const uri = await drawPicture(prompt, style, people, (stage, p) => {
+        if (stage === 'loading') {
+          const t0 = Date.now();
+          const show = () => {
+            const s = Math.round((Date.now() - t0) / 1000);
+            const el = s >= 60 ? `${Math.floor(s / 60)}분 ${s % 60}초` : `${s}초`;
+            phase(
+              firstTime
+                ? `새 그림 모델을 이 기기에 맞게 준비하는 중… ${el}\n처음 한 번만, 보통 1~5분 걸립니다. 앱을 켜 둔 채로 기다려 주세요.` +
+                    (s > 420 ? '\n너무 오래 걸리면 앱을 완전히 껐다 켠 뒤 다시 그려 보세요.' : '')
+                : `그림 모델 불러오는 중… ${el}` + (s > 120 ? '\n평소보다 오래 걸립니다. 앱을 껐다 켜면 나아질 수 있습니다.' : ''),
+            );
+          };
+          stopTimer();
+          show();
+          loadTimer = setInterval(show, 1000);
+        } else {
+          stopTimer();
+          phase(`그리는 중 ${p?.step ?? 0}/${p?.stepCount ?? 25}`, p ? p.step / Math.max(1, p.stepCount) : 0);
+        }
+      }).finally(stopTimer);
       setMessages((prev) => [
         ...prev,
         { id: uid(), role: 'assistant', content: `[그림: ${d} · ${style.label}]`, picture: uri },
@@ -284,7 +308,7 @@ export function ChatScreen({ model, settings, gpuInfo, initialInput = '', onChan
     // 답변을 만들거나 그리는 중이면 끝날 때까지 기다렸다가 채팅 모델을 내린다
     while (busyRef.current) await new Promise((r) => setTimeout(r, 500));
     followLatest.current = true;
-    setDrawing({ desc: '', svg: null, chars: 0, phase: '그림 모델을 처음 준비하는 중… (이 기기에서 한 번만, 1~3분)' });
+    setDrawing({ desc: '', svg: null, chars: 0, phase: '그림 모델을 처음 준비하는 중… (이 기기에서 한 번만, 보통 1~5분. 앱을 켜 둔 채로 기다려 주세요)' });
     await activateKeepAwakeAsync('sd-prepare');
     let unloaded = false;
     try {

@@ -99,7 +99,29 @@ export function trimImageModel() {
   if (!r) return;
   const enc = new Directory(r, 'VAEEncoder.mlmodelc');
   if (enc.exists) enc.delete();
-  for (const e of dir.list()) if (e instanceof File && e.name.startsWith('.') && e.name !== '.model.json') e.delete();
+  for (const e of dir.list())
+    if (e instanceof File && e.name.startsWith('.') && e.name !== '.model.json' && e.name !== '.prepared') e.delete();
+}
+
+/**
+ * 이 기기에서 한 번 불러온(Neural Engine 용으로 준비한) 모델인지.
+ * 처음 불러올 때는 iPhone 이 모델을 기기에 맞게 변환하느라 몇 분 걸리므로 화면에 따로 안내한다.
+ */
+const preparedFile = () => new File(sdDir(), '.prepared');
+export function isImageModelPrepared(): boolean {
+  try {
+    const f = preparedFile();
+    return f.exists && f.textSync() === (installedImageModelId() ?? '');
+  } catch {
+    return false;
+  }
+}
+function markPrepared() {
+  try {
+    const f = preparedFile();
+    if (!f.exists) f.create();
+    f.writeSync(installedImageModelId() ?? '');
+  } catch {}
 }
 
 export function deleteImageModel() {
@@ -299,6 +321,7 @@ export async function drawPicture(
   if (!res) throw new Error('그림 모델이 설치되어 있지 않습니다.');
   onStage('loading');
   await loadImageModel(res);
+  markPrepared();
   const dir = picturesDir();
   ensureDir(dir);
   const out = new File(dir, `${Date.now().toString(36)}.png`);
@@ -329,6 +352,7 @@ export async function prepareImageModel(): Promise<void> {
   if (!res) throw new Error('그림 모델이 설치되어 있지 않습니다.');
   try {
     await loadImageModel(res);
+    markPrepared();
   } finally {
     await unloadImageModel().catch(() => {});
   }
