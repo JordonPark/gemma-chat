@@ -59,7 +59,7 @@ jobs:
           PY
           pip install --quiet torch==2.4.1 --index-url https://download.pytorch.org/whl/cpu
           pip install --quiet coremltools==8.3.0 "diffusers[torch]==0.30.2" transformers==4.44.2 huggingface-hub==0.24.6 \
-            "numpy<1.24" scipy scikit-learn safetensors accelerate omegaconf
+            "numpy<1.24" scipy scikit-learn safetensors accelerate omegaconf pytest matplotlib invisible-watermark requests
           pip install --quiet --no-deps -e mlsd
           python3 -c "import coremltools, torch, diffusers; print(coremltools.__version__, torch.__version__, diffusers.__version__)"
           python3 -c "import python_coreml_stable_diffusion.torch2coreml" 2> imp.log || { echo "::error title=import::$(tail -15 imp.log | sed ':a;N;$!ba;s/\n/%0A/g')"; exit 1; }
