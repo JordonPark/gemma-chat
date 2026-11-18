@@ -37,7 +37,7 @@ import { clearMemories, loadMemories, mightNeedTool, removeMemory, runTool } fro
 import { getChatLayout, minInlineComposerWidth, type Division } from './foldLayout';
 import { deletePictures } from './legacyDrawing';
 import { ImageViewer, type ImagePreview } from './ImageViewer';
-import { ContentSafetyError } from './contentSafety';
+import { ContentSafetyError, cooldownSeconds, recordStrike } from './contentSafety';
 import { LegalInfo } from './LegalInfo';
 import { ReportContent } from './ReportContent';
 import { APP_NAME, SUPPORT_BASE_URL } from './storeConfig';
@@ -224,6 +224,12 @@ export function ChatScreen({ model, settings, gpuInfo, initialInput = '', onChan
       ]);
       return;
     }
+    // 차단이 반복되면 잠시 쉬게 한다
+    const wait = cooldownSeconds();
+    if (wait > 0) {
+      Alert.alert('잠시 후 다시 시도해 주세요', `이용 기준에 맞지 않는 요청이 반복되어 ${wait}초 동안 쉬어 갑니다.`);
+      return;
+    }
     const userMsg: ChatMessage = {
       id: uid(),
       role: 'user',
@@ -245,7 +251,13 @@ export function ChatScreen({ model, settings, gpuInfo, initialInput = '', onChan
     setStats(null);
     await activateKeepAwakeAsync('gen');
     try {
-      await checkGeneratedContent(userMsg.content, 'user request');
+      // 안전 검사: 요청 + 사진 속 글자, 최근 사용자 말 2개를 함께 본다 (나눠서 묻는 우회 방지)
+      const earlier = messages
+        .filter((m) => m.role === 'user' && !m.blocked)
+        .slice(-2)
+        .map((m) => m.content);
+      const checked = userMsg.ocr ? `${userMsg.content}\n[사진 속 글자] ${userMsg.ocr.slice(0, 1500)}` : userMsg.content;
+      await checkGeneratedContent(checked, 'user request', earlier);
       // 계산·날짜·단위·기억이 필요해 보이면 기기 도구를 먼저 고르고 실행한 뒤, 그 결과로 답한다
       if (!userMsg.image && mightNeedTool(userMsg.content)) {
         setStreaming('🔧 도구 확인 중…');
@@ -267,7 +279,12 @@ export function ChatScreen({ model, settings, gpuInfo, initialInput = '', onChan
       setStats(st);
     } catch (e: any) {
       if (e instanceof ContentSafetyError) {
-        setMessages((prev) => [...prev, { id: uid(), role: 'assistant', content: e.message }]);
+        if (e.category !== 'self_harm') recordStrike(); // 자해 신호는 도움 안내만 하고 벌점은 주지 않는다
+        const blocked = e.category !== 'self_harm';
+        setMessages((prev) => [
+          ...prev.map((m) => (blocked && m.id === userMsg.id ? { ...m, blocked: true } : m)),
+          { id: uid(), role: 'assistant', content: e.message },
+        ]);
       } else {
         Alert.alert('생성 오류', String(e?.message ?? e));
       }

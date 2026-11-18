@@ -6,6 +6,7 @@
  *  - 기억: "기억해 줘" 한 내용을 앱 저장소에 두고, 매 대화의 시스템 프롬프트에 넣어 기억하게 한다
  */
 import { File, Paths } from 'expo-file-system';
+import { quickScreen } from './contentSafety';
 
 // ───────────────────────── 도구가 필요할 수 있는 말인지 (아니면 도구 고르기 단계를 건너뛰어 평소처럼 빠르게 답한다)
 
@@ -322,6 +323,10 @@ export function runTool(call: ToolCall): ToolResult | null {
       return { note: `단위 변환: ${r}`, chip: `📏 ${r}` };
     }
     case 'remember': {
+      // 기억은 매 대화의 시스템 프롬프트에 들어가므로, 우회 지시나 유해한 내용은 저장하지 않는다
+      if (quickScreen(call.text)) {
+        return { note: '이 내용은 이용 기준에 맞지 않아 기억하지 않았습니다. 그렇게 안내하세요.', chip: '🧠 기억하지 않음 (이용 기준)' };
+      }
       const m = addMemory(call.text);
       return { note: `기억 저장 완료: "${m.text}" (앞으로 대화에서 기억합니다)`, chip: `🧠 기억함: ${m.text}` };
     }
