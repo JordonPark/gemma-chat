@@ -188,7 +188,7 @@ export function ChatScreen({ model, settings, gpuInfo, initialInput = '', onChan
     });
   };
 
-  const attach = () => {
+  const attach = async () => {
     if (workPending.current) return;
     // 이미지 인식(Gemma 비전)이 없어도 OCR 이 있으면 사진의 글자로 답할 수 있다
     if (!isOcrAvailable() && !vision.ensureReady()) return;
@@ -209,9 +209,11 @@ export function ChatScreen({ model, settings, gpuInfo, initialInput = '', onChan
         setWorkingWithPhoto(false);
       }
     };
+    const canScan = await isScanAvailable();
+    if (workPending.current || libraryRef.current.activeId !== activeChat.id) return;
     const buttons: AlertButton[] = [
       // 글자만 필요하면: 사진을 찍지 않고 카메라 화면에서 바로 읽는다 (셔터 소리 없음, 사진도 남지 않음)
-      ...(isScanAvailable() ? [{ text: '글자 스캔 (사진 안 찍음)', onPress: () => scanLive() }] : []),
+      ...(canScan ? [{ text: '글자 스캔 (사진 안 찍음)', onPress: () => scanLive() }] : []),
       { text: '카메라로 찍기', onPress: () => go('camera') },
       { text: '앨범에서 고르기', onPress: () => go('library') },
     ];

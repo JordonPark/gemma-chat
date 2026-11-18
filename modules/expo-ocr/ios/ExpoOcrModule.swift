@@ -19,34 +19,41 @@ public final class ExpoOcrModule: Module {
     }
 
     /// 이 기기에서 실시간 글자 스캔을 쓸 수 있는지 (iOS 16+, A12 칩 이상)
-    Function("isScanSupported") { () -> Bool in
-      if #available(iOS 16.0, *) {
+    AsyncFunction("isScanSupported") { () -> Bool in
+      MainActor.assumeIsolated {
+        guard #available(iOS 16.0, *) else { return false }
         return DataScannerViewController.isSupported
       }
-      return false
-    }
+    }.runOnQueue(.main)
 
     /// 실시간 글자 스캔 화면을 띄우고, 읽은 글자를 돌려준다 (취소하면 nil).
     /// 사진을 찍지 않으므로 셔터 소리가 없고 사진도 남지 않는다.
     AsyncFunction("scanText") { (promise: Promise) in
-      guard #available(iOS 16.0, *), DataScannerViewController.isSupported else {
-        promise.reject("ERR_SCAN_UNSUPPORTED", "이 기기에서는 실시간 글자 스캔을 쓸 수 없습니다. 앨범에서 사진을 골라 주세요.")
-        return
+      MainActor.assumeIsolated {
+        self.presentScanner(promise)
       }
-      guard DataScannerViewController.isAvailable else {
-        promise.reject("ERR_SCAN_UNAVAILABLE", "카메라를 쓸 수 없습니다. 설정에서 카메라 권한을 허용해 주세요.")
-        return
-      }
-      guard let presenter = self.appContext?.utilities?.currentViewController() else {
-        promise.reject("ERR_SCAN", "화면을 열 수 없습니다.")
-        return
-      }
-      let supported = DataScannerViewController.supportedTextRecognitionLanguages
-      let languages = ["ko-KR", "en-US"].filter { supported.contains($0) }
-      let vc = TextScanController(languages: languages)
-      vc.onFinish = { text in promise.resolve(text) }
-      presenter.present(vc, animated: true)
     }.runOnQueue(.main)
+  }
+
+  @MainActor
+  private func presentScanner(_ promise: Promise) {
+    guard #available(iOS 16.0, *), DataScannerViewController.isSupported else {
+      promise.reject("ERR_SCAN_UNSUPPORTED", "이 기기에서는 실시간 글자 스캔을 쓸 수 없습니다. 앨범에서 사진을 골라 주세요.")
+      return
+    }
+    guard DataScannerViewController.isAvailable else {
+      promise.reject("ERR_SCAN_UNAVAILABLE", "카메라를 쓸 수 없습니다. 설정에서 카메라 권한을 허용해 주세요.")
+      return
+    }
+    guard let presenter = appContext?.utilities?.currentViewController() else {
+      promise.reject("ERR_SCAN", "화면을 열 수 없습니다.")
+      return
+    }
+    let supported = DataScannerViewController.supportedTextRecognitionLanguages
+    let languages = ["ko-KR", "en-US"].filter { supported.contains($0) }
+    let vc = TextScanController(languages: languages)
+    vc.onFinish = { text in promise.resolve(text) }
+    presenter.present(vc, animated: true)
   }
 
   private struct OcrError: LocalizedError {

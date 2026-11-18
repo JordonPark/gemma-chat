@@ -24,7 +24,7 @@ export type OcrResult = {
 type NativeOcr = {
   recognizeText(uri: string): Promise<OcrResult>;
   /** 1.6.0 이후 빌드에만 있다 (실시간 글자 스캔) */
-  isScanSupported?(): boolean;
+  isScanSupported?(): boolean | Promise<boolean>;
   scanText?(): Promise<string | null>;
 };
 
@@ -36,9 +36,9 @@ export const isOcrAvailable = () => native != null;
  * 실시간 글자 스캔을 쓸 수 있는지. 사진을 찍지 않고 카메라 화면에서 바로 읽으므로 셔터 소리가 없다.
  * (iOS: VisionKit DataScanner, A12 칩 이상 / Android: CameraX + ML Kit). 예전 앱 빌드에는 없다.
  */
-export function isScanAvailable(): boolean {
+export async function isScanAvailable(): Promise<boolean> {
   try {
-    return typeof native?.scanText === 'function' && native.isScanSupported?.() === true;
+    return typeof native?.scanText === 'function' && (await native.isScanSupported?.()) === true;
   } catch {
     return false;
   }
