@@ -14,8 +14,11 @@ type Props = {
   width: number;
   annot: PhotoAnnotations;
   translating?: boolean;
-  onOpen?: (uri: string) => void;
+  /** 크게 보기: 지금 보고 있는 표시 상태(번역/물건)를 그대로 넘긴다 */
+  onOpen?: (uri: string, view: AnnotationView) => void;
 };
+
+export type AnnotationView = { showTranslation: boolean; showObjects: boolean };
 
 export function AnnotatedPhoto({ uri, width, annot, translating, onOpen }: Props) {
   const [aspect, setAspect] = useState<number | null>(null); // 높이 / 너비
@@ -49,51 +52,12 @@ export function AnnotatedPhoto({ uri, width, annot, translating, onOpen }: Props
       <Pressable
         accessibilityRole="imagebutton"
         accessibilityLabel="첨부 사진 크게 보기"
-        onPress={() => onOpen?.(uri)}
+        onPress={() => onOpen?.(uri, { showTranslation, showObjects })}
         style={[styles.frame, { width: W, height: H }]}
       >
         <Image source={{ uri }} style={StyleSheet.absoluteFill} resizeMode="cover" />
 
-        {/* 글자 */}
-        {annot.lines.map((l, i) => {
-          const tr = annot.translations?.[i];
-          const left = l.box.x * W;
-          const top = l.box.y * H;
-          const w = Math.max(12, l.box.width * W);
-          const h = Math.max(10, l.box.height * H);
-          if (showTranslation && tr) {
-            const fontSize = Math.max(8, Math.min(20, h * 0.72));
-            return (
-              <View key={`t${i}`} style={[styles.trBox, { left: left - 2, top: top - 1, minWidth: w + 4, minHeight: h + 2 }]}>
-                <Text style={[styles.trText, { fontSize, lineHeight: fontSize * 1.2 }]} numberOfLines={2}>
-                  {tr}
-                </Text>
-              </View>
-            );
-          }
-          return !showTranslation || !hasTranslation ? (
-            <View key={`b${i}`} pointerEvents="none" style={[styles.textBox, { left, top, width: w, height: h }]} />
-          ) : null;
-        })}
-
-        {/* 물건 */}
-        {showObjects &&
-          annot.objects.map((o, i) => {
-            const left = o.box.x * W;
-            const top = o.box.y * H;
-            const labelInside = top < 20;
-            return (
-              <View
-                key={`o${i}`}
-                pointerEvents="none"
-                style={[styles.objBox, { left, top, width: o.box.width * W, height: o.box.height * H }]}
-              >
-                <Text style={[styles.objLabel, labelInside ? styles.labelInside : styles.labelAbove]} numberOfLines={1}>
-                  {o.label}
-                </Text>
-              </View>
-            );
-          })}
+        <AnnotationLayer annot={annot} width={W} height={H} showTranslation={showTranslation} showObjects={showObjects} />
       </Pressable>
 
       <View style={styles.chips}>
@@ -112,7 +76,57 @@ export function AnnotatedPhoto({ uri, width, annot, translating, onOpen }: Props
   );
 }
 
-function Chip({ label, onPress }: { label: string; onPress: () => void }) {
+/**
+ * 사진 위 표시 층 (작은 미리보기와 크게 보기에서 함께 쓴다). width·height 는 사진이 실제로 그려진 크기.
+ * 크게 보기에서는 사진과 같은 확대·이동 층 안에 두어 확대해도 위치가 맞는다.
+ */
+export function AnnotationLayer({
+  annot,
+  width: W,
+  height: H,
+  showTranslation,
+  showObjects,
+}: { annot: PhotoAnnotations; width: number; height: number } & AnnotationView) {
+  const hasTranslation = !!annot.translations?.some((t) => t);
+  return (
+    <View pointerEvents="none" style={StyleSheet.absoluteFill}>
+      {annot.lines.map((l, i) => {
+        const tr = annot.translations?.[i];
+        const left = l.box.x * W;
+        const top = l.box.y * H;
+        const w = Math.max(12, l.box.width * W);
+        const h = Math.max(10, l.box.height * H);
+        if (showTranslation && tr) {
+          const fontSize = Math.max(8, Math.min(28, h * 0.72));
+          return (
+            <View key={`t${i}`} style={[styles.trBox, { left: left - 2, top: top - 1, minWidth: w + 4, minHeight: h + 2 }]}>
+              <Text style={[styles.trText, { fontSize, lineHeight: fontSize * 1.2 }]} numberOfLines={2}>
+                {tr}
+              </Text>
+            </View>
+          );
+        }
+        return !showTranslation || !hasTranslation ? (
+          <View key={`b${i}`} style={[styles.textBox, { left, top, width: w, height: h }]} />
+        ) : null;
+      })}
+      {showObjects &&
+        annot.objects.map((o, i) => {
+          const left = o.box.x * W;
+          const top = o.box.y * H;
+          return (
+            <View key={`o${i}`} style={[styles.objBox, { left, top, width: o.box.width * W, height: o.box.height * H }]}>
+              <Text style={[styles.objLabel, top < 20 ? styles.labelInside : styles.labelAbove]} numberOfLines={1}>
+                {o.label}
+              </Text>
+            </View>
+          );
+        })}
+    </View>
+  );
+}
+
+export function Chip({ label, onPress }: { label: string; onPress: () => void }) {
   return (
     <Pressable accessibilityRole="button" onPress={onPress} style={styles.chip} hitSlop={6}>
       <Text style={styles.chipText}>{label}</Text>

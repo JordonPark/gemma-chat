@@ -680,7 +680,7 @@ export function ChatScreen({ model, settings, gpuInfo, initialInput = '', onChan
                           width={mediaSize}
                           annot={item.annot}
                           translating={translatingId === item.id}
-                          onOpen={(uri) => openPreview({ uri, title: '첨부 사진' })}
+                          onOpen={(uri, view) => openPreview({ uri, title: '첨부 사진', annot: item.annot, ...view })}
                         />
                       ) : item.image ? (
                         <PhotoThumbnail

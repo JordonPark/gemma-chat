@@ -14,8 +14,11 @@ import { StatusBar } from 'expo-status-bar';
 import { FoldAwareArea } from './FoldAwareArea';
 import { getFoldInsets } from './foldLayout';
 import { boundImage, fitImage, MAX_IMAGE_ZOOM, zoomImage, type ImageTransform } from './imageZoom';
+import { AnnotationLayer, Chip, type AnnotationView } from './AnnotatedPhoto';
+import type { PhotoAnnotations } from './photoAnnotate';
 
-export type ImagePreview = { title: string; uri: string };
+/** annot 가 있으면 확대해도 같은 자리에 글자 번역·물건 상자를 그린다 */
+export type ImagePreview = { title: string; uri: string; annot?: PhotoAnnotations } & Partial<AnnotationView>;
 
 const CENTER = { x: 0, y: 0 };
 const FITTED = { ...CENTER, scale: 1 };
@@ -33,6 +36,12 @@ function sampleTouches(event: GestureResponderEvent) {
 }
 
 export function ImageViewer({ media, onClose }: { media: ImagePreview; onClose: () => void }) {
+  const [view, setView] = useState<AnnotationView>({
+    showTranslation: media.showTranslation ?? true,
+    showObjects: media.showObjects ?? true,
+  });
+  const annot = media.annot;
+  const hasTranslation = !!annot?.translations?.some((t) => t);
   return (
     <Modal animationType="fade" presentationStyle="fullScreen" onRequestClose={onClose} supportedOrientations={['portrait', 'landscape']}>
       <SafeAreaProvider>
@@ -54,7 +63,23 @@ export function ImageViewer({ media, onClose }: { media: ImagePreview; onClose: 
                       <Text style={styles.controlText}>닫기</Text>
                     </Pressable>
                   </View>
-                  <ZoomableImage media={media} />
+                  {annot && (hasTranslation || annot.objects.length) ? (
+                    <View style={styles.annotBar}>
+                      {hasTranslation ? (
+                        <Chip
+                          label={view.showTranslation ? '원문 보기' : '번역 보기'}
+                          onPress={() => setView((v) => ({ ...v, showTranslation: !v.showTranslation }))}
+                        />
+                      ) : null}
+                      {annot.objects.length ? (
+                        <Chip
+                          label={view.showObjects ? '물건 표시 끄기' : '물건 표시'}
+                          onPress={() => setView((v) => ({ ...v, showObjects: !v.showObjects }))}
+                        />
+                      ) : null}
+                    </View>
+                  ) : null}
+                  <ZoomableImage media={media} view={view} />
                 </View>
               );
             }}
@@ -67,7 +92,7 @@ export function ImageViewer({ media, onClose }: { media: ImagePreview; onClose: 
 
 type TouchSample = NonNullable<ReturnType<typeof sampleTouches>>;
 
-function ZoomableImage({ media }: { media: ImagePreview }) {
+function ZoomableImage({ media, view }: { media: ImagePreview; view: AnnotationView }) {
   const [viewport, setViewport] = useState({ width: 0, height: 0 });
   const [imageSize, setImageSize] = useState<{ width: number; height: number } | null>(null);
   const [broken, setBroken] = useState(false);
@@ -172,6 +197,10 @@ function ZoomableImage({ media }: { media: ImagePreview }) {
                 }}
                 onError={() => setBroken(true)}
               />
+            {/* 사진과 같은 확대·이동 층 안에 그려 확대해도 상자 위치가 맞는다 */}
+            {media.annot && imageSize ? (
+              <AnnotationLayer annot={media.annot} width={fitted.width} height={fitted.height} {...view} />
+            ) : null}
           </Animated.View>
         )}
       </View>
@@ -208,6 +237,7 @@ const styles = StyleSheet.create({
   screen: { flex: 1, backgroundColor: '#111018' },
   content: { flex: 1, minHeight: 0, minWidth: 0 },
   header: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingHorizontal: 16, paddingVertical: 8 },
+  annotBar: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, paddingHorizontal: 16, paddingBottom: 6 },
   title: { flex: 1, color: '#F7F2FF', fontSize: 17, fontWeight: '700' },
   viewport: { flex: 1, overflow: 'hidden', alignItems: 'center', justifyContent: 'center' },
   image: { width: '100%', height: '100%' },
