@@ -17,6 +17,7 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { activateKeepAwakeAsync, deactivateKeepAwake } from 'expo-keep-awake';
 import {
+  generateIllustration,
   generateReply,
   resetConversationCache,
   stopGeneration,
@@ -26,6 +27,7 @@ import {
 } from './llm';
 import { formatBytes, type InstalledModel } from './modelStore';
 import { Markdown } from './Markdown';
+import { SvgCard } from './SvgCard';
 import { UpdateBanner, checkForUpdateInteractive, describeAppVersion } from './UpdateBanner';
 import { loadChat, saveChat } from './storage';
 import { colors } from './theme';
@@ -50,12 +52,14 @@ export function ChatScreen({ model, settings, gpuInfo, onChangeSettings, onRemov
   const [stats, setStats] = useState<GenStats | null>(null);
   const [showSettings, setShowSettings] = useState(false);
   const [pendingImage, setPendingImage] = useState<string | null>(null);
+  /** 일러스트를 그리는 중이면 { 설명, 미리보기 SVG, 받은 글자 수 } */
+  const [drawing, setDrawing] = useState<{ desc: string; svg: string | null; chars: number } | null>(null);
   const listRef = useRef<FlatList<ChatMessage>>(null);
   const vision = useVision(settings);
 
   useEffect(() => saveChat(messages), [messages]);
 
-  const busy = streaming !== null;
+  const busy = streaming !== null || drawing !== null;
   const canSend = !!input.trim() || !!pendingImage;
 
   const attach = () => {
@@ -75,9 +79,40 @@ export function ChatScreen({ model, settings, gpuInfo, onChangeSettings, onRemov
     ]);
   };
 
+  /** 설명을 받아 SVG 일러스트를 그린다 */
+  const draw = async (desc: string) => {
+    if (busy) return;
+    const d = desc.trim();
+    if (!d) {
+      Alert.alert('그림 그리기', '무엇을 그릴지 입력창에 적은 뒤 🎨 를 누르세요.\n예: 우주를 나는 고양이, 노을 지는 바닷가');
+      return;
+    }
+    setMessages((prev) => [...prev, { id: uid(), role: 'user', content: `🎨 ${d}` }]);
+    setInput('');
+    setStats(null);
+    setDrawing({ desc: d, svg: null, chars: 0 });
+    await activateKeepAwakeAsync('draw');
+    try {
+      const { svg, stats: st } = await generateIllustration(d, (svgPart, chars) =>
+        setDrawing((prev) => (prev ? { ...prev, svg: svgPart ?? prev.svg, chars } : prev)),
+      );
+      setMessages((prev) => [...prev, { id: uid(), role: 'assistant', content: `[일러스트: ${d}]`, svg }]);
+      setStats(st);
+    } catch (e: any) {
+      Alert.alert('그리기 오류', String(e?.message ?? e));
+    } finally {
+      deactivateKeepAwake('draw');
+      setDrawing(null);
+    }
+  };
+
   const send = async () => {
     const text = input.trim();
     if (!canSend || busy) return;
+    // "…그려줘", "…그림 그려 주세요", "…일러스트 만들어줘" 는 그림 그리기로 보낸다 (사진 첨부가 없을 때)
+    if (!pendingImage && /(그려\s*(줘|주세요|줄래|봐)|그림\s*(을\s*)?(그려|만들어)|일러스트\s*(를\s*)?(그려|만들어))/.test(text)) {
+      return draw(text);
+    }
     const userMsg: ChatMessage = {
       id: uid(),
       role: 'user',
@@ -113,7 +148,11 @@ export function ChatScreen({ model, settings, gpuInfo, onChangeSettings, onRemov
   };
 
   const data: ChatMessage[] =
-    streaming !== null ? [...messages, { id: '__streaming__', role: 'assistant', content: streaming || '…' }] : messages;
+    streaming !== null
+      ? [...messages, { id: '__streaming__', role: 'assistant', content: streaming || '…' }]
+      : drawing !== null
+        ? [...messages, { id: '__drawing__', role: 'assistant', content: '', svg: drawing.svg ?? '' }]
+        : messages;
 
   return (
     <KeyboardAvoidingView
@@ -147,11 +186,21 @@ export function ChatScreen({ model, settings, gpuInfo, onChangeSettings, onRemov
         keyExtractor={(m) => m.id}
         onContentSizeChange={() => listRef.current?.scrollToEnd({ animated: false })}
         ListEmptyComponent={
-          <Text style={styles.empty}>무엇이든 물어보세요.{'\n'}모든 처리는 이 기기 안에서만 이루어집니다.</Text>
+          <Text style={styles.empty}>
+            무엇이든 물어보세요.{'\n'}📷 사진에 대해 묻거나, 🎨 로 일러스트를 그려 보세요.{'\n'}모든 처리는 이 기기 안에서만 이루어집니다.
+          </Text>
         }
         renderItem={({ item }) => (
           <View style={[styles.bubble, item.role === 'user' ? styles.userBubble : styles.botBubble]}>
-            {item.role === 'assistant' ? (
+            {item.id === '__drawing__' && drawing ? (
+              drawing.svg ? (
+                <SvgCard svg={drawing.svg} live caption={`그리는 중… (${drawing.chars}자)`} />
+              ) : (
+                <Text style={styles.msg}>🎨 그림을 구상하는 중… ({drawing.chars}자)</Text>
+              )
+            ) : item.role === 'assistant' && item.svg ? (
+              <SvgCard svg={item.svg} caption={item.content.replace(/^\[일러스트: (.*)\]$/, '$1')} />
+            ) : item.role === 'assistant' ? (
               <Markdown text={item.content} />
             ) : (
               <>
@@ -178,6 +227,9 @@ export function ChatScreen({ model, settings, gpuInfo, onChangeSettings, onRemov
       <View style={[styles.inputRow, { paddingBottom: Math.max(insets.bottom, 8) }]}>
         <Pressable style={[styles.attach, busy && styles.off]} onPress={attach} disabled={busy}>
           <Text style={styles.attachText}>📷</Text>
+        </Pressable>
+        <Pressable style={[styles.attach, busy && styles.off]} onPress={() => draw(input)} disabled={busy}>
+          <Text style={styles.attachText}>🎨</Text>
         </Pressable>
         <TextInput
           style={styles.input}

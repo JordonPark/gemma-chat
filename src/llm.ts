@@ -3,10 +3,14 @@
  */
 import { Platform } from 'react-native';
 import { initLlama, type LlamaContext, type RNLlamaOAICompatibleMessage } from 'llama.rn';
+import { closePartialSvg, extractSvg, illustrationPrompt, sanitizeSvg } from './svg';
 
 export type Role = 'user' | 'assistant';
-/** image: 앱 저장소에 있는 사진의 file:// URI (사용자 메시지에만) */
-export type ChatMessage = { id: string; role: Role; content: string; image?: string };
+/**
+ * image: 앱 저장소에 있는 사진의 file:// URI (사용자 메시지에만)
+ * svg: Gemma 가 그린 일러스트 (어시스턴트 메시지에만). 대화 기록으로 모델에 넘길 때는 content 만 쓴다.
+ */
+export type ChatMessage = { id: string; role: Role; content: string; image?: string; svg?: string };
 
 export type Settings = {
   systemPrompt: string;
@@ -199,4 +203,56 @@ function stripStop(s: string) {
     if (i >= 0) out = out.slice(0, i);
   }
   return out;
+}
+
+// ───────────────────────── 일러스트 (SVG) ─────────────────────────
+
+/**
+ * 설명을 받아 Gemma 가 SVG 일러스트를 그린다. 그리는 중간중간 onPartial 로 그릴 수 있는 SVG 를 넘겨 준다.
+ * 대화 기록과 섞이지 않게 단독 요청으로 처리한다.
+ */
+export async function generateIllustration(
+  description: string,
+  onPartial: (svg: string | null, rawLength: number) => void,
+): Promise<{ svg: string; stats: GenStats }> {
+  const c = ctx;
+  if (!c) throw new Error('모델이 로드되지 않았습니다.');
+
+  await c.clearCache(false);
+  let acc = '';
+  let lastEmit = 0;
+  const res = await c.completion(
+    {
+      messages: [{ role: 'user', content: illustrationPrompt(description) }],
+      jinja: true,
+      n_predict: 2000,
+      temperature: 0.7,
+      top_k: 64,
+      top_p: 0.95,
+      stop: [...STOP_WORDS, '</svg>'],
+    },
+    (data) => {
+      acc += data.token;
+      const now = Date.now();
+      if (now - lastEmit < 400) return; // 미리보기는 0.4초마다
+      lastEmit = now;
+      const p = closePartialSvg(acc);
+      onPartial(p ? sanitizeSvg(p) : null, acc.length);
+    },
+  );
+  await c.clearCache(false);
+
+  let raw = stripStop(res.content || res.text || acc);
+  if (!/<\/svg>/i.test(raw)) raw += '</svg>'; // stop 단어로 잘린 닫는 태그 복구
+  const svg = extractSvg(raw);
+  if (!svg) throw new Error('그림을 만들지 못했습니다. 설명을 조금 바꿔 다시 시도해 보세요.');
+  const closed = closePartialSvg(svg) ?? svg;
+  return {
+    svg: sanitizeSvg(closed),
+    stats: {
+      tokens: res.timings?.predicted_n ?? 0,
+      tokPerSec: res.timings?.predicted_per_second ?? 0,
+      interrupted: !!res.interrupted,
+    },
+  };
 }

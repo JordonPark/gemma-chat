@@ -26,7 +26,8 @@ const config: ExpoConfig = {
   ...(easOwner ? { owner: easOwner } : {}),
   // 네이티브 변경(라이브러리·권한) 때마다 올린다 → OTA 업데이트가 맞는 앱에만 간다
   // 1.1.0: 카메라·사진(expo-image-picker, expo-image-manipulator) 추가
-  version: '1.1.0',
+  // 1.2.0: SVG 일러스트(react-native-svg), PNG 저장·공유(react-native-view-shot, expo-sharing)
+  version: '1.2.0',
   orientation: 'portrait',
   icon: './assets/icon.png',
   userInterfaceStyle: 'automatic',
@@ -49,6 +50,8 @@ const config: ExpoConfig = {
       UIFileSharingEnabled: true,
       LSSupportsOpeningDocumentsInPlace: true,
       ITSAppUsesNonExemptEncryption: false,
+      // 공유 시트의 "이미지 저장"으로 일러스트를 사진 앱에 저장할 때 필요
+      NSPhotoLibraryAddUsageDescription: '그린 일러스트를 사진 앱에 저장합니다.',
     },
   },
   android: {
@@ -66,8 +69,8 @@ const config: ExpoConfig = {
     [
       'expo-image-picker',
       {
-        cameraPermission: '사진을 찍어 기기 안에서 물체·글자를 인식하고 인증하는 데 사용합니다. 사진은 기기 밖으로 나가지 않습니다.',
-        photosPermission: '앨범의 사진을 기기 안에서 인식하고 인증하는 데 사용합니다. 사진은 기기 밖으로 나가지 않습니다.',
+        cameraPermission: '사진을 찍어 기기 안에서 물체·글자를 인식하는 데 사용합니다. 사진은 기기 밖으로 나가지 않습니다.',
+        photosPermission: '앨범의 사진을 기기 안에서 인식하는 데 사용합니다. 사진은 기기 밖으로 나가지 않습니다.',
         microphonePermission: false,
       },
     ],
