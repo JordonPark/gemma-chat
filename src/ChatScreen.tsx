@@ -115,7 +115,7 @@ const LENGTH_PRESETS = [
   { label: '많이', nCtx: 8192, maxNewTokens: 2048, hint: '긴 대화를 더 오래 기억하고 긴 답(풀이·글쓰기)도 끝까지 씁니다. 메모리를 더 쓰고 조금 느려질 수 있어요.' },
 ] as const;
 
-export function ChatScreen({ settings, gpuInfo, initialInput = '', onChangeSettings }: Props) {
+export function ChatScreen({ settings, initialInput = '', onChangeSettings }: Props) {
   const { fontScale } = useWindowDimensions();
   const [library, setLibrary] = useState(loadChatLibrary);
   const libraryRef = useRef(library);
@@ -146,7 +146,7 @@ export function ChatScreen({ settings, gpuInfo, initialInput = '', onChangeSetti
   const [showLibrary, setShowLibrary] = useState(false);
   const [input, setInput] = useState(initialInput || activeChat.draft?.input || '');
   const [streaming, setStreaming] = useState<string | null>(null);
-  const [stats, setStats] = useState<GenStats | null>(null);
+  const [, setStats] = useState<GenStats | null>(null);
   const [showSettings, setShowSettings] = useState(false);
   const [reportItem, setReportItem] = useState<ChatMessage | null>(null);
   const [preview, setPreview] = useState<ImagePreview | null>(null);
@@ -586,10 +586,10 @@ export function ChatScreen({ settings, gpuInfo, initialInput = '', onChangeSetti
                 <Text style={styles.title} accessibilityRole="header" numberOfLines={1}>
                   {hasConversationContent(activeChat) ? conversationName(activeChat) : activeTask?.name ?? (hasDuoToolbar ? '새 대화' : APP_NAME)}
                 </Text>
-                <Text style={styles.subtitle} numberOfLines={1}>
-                  {activeTask ? `${activeTask.name} · ` : ''}Gemma 3 4B · {gpuInfo}
-                  {stats ? ` · ${stats.tokPerSec.toFixed(1)} tok/s` : ''}
-                </Text>
+                {/* 모델·속도 같은 기술 정보는 보여 주지 않는다. 테스크에 속한 대화면 테스크 이름만 */}
+                {activeTask && hasConversationContent(activeChat) ? (
+                  <Text style={styles.subtitle} numberOfLines={1}>{activeTask.name}</Text>
+                ) : null}
               </View>
               {!showSidebar && !hasDuoToolbar ? (
                 <>
