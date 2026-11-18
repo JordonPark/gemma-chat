@@ -33,20 +33,22 @@ import {
   type Settings,
 } from './llm';
 import type { AreaSize } from '../modules/gemma-fold';
+import { ChatLibrary, type ChatScope } from './ChatLibrary';
+import { conversationName, hasConversationContent, makeConversation, removeTask, type ChatLibraryData, type ChatTask, type Conversation } from './conversationLibrary';
 import { FoldAwareArea } from './FoldAwareArea';
 import { clearMemories, loadMemories, mightNeedTool, removeMemory, runTool } from './tools';
-import { getChatLayout, minInlineComposerWidth, type Division } from './foldLayout';
+import { getChatLayout, getFoldInsets, minInlineComposerWidth, type Division } from './foldLayout';
 import { deletePictures } from './legacyDrawing';
 import { ImageViewer, type ImagePreview } from './ImageViewer';
 import { ContentSafetyError, cooldownSeconds, recordStrike } from './contentSafety';
 import { LegalInfo } from './LegalInfo';
 import { ReportContent } from './ReportContent';
 import { APP_NAME, SUPPORT_BASE_URL } from './storeConfig';
-import { formatBytes, type InstalledModel } from './modelStore';
+import { formatBytes, type ImportProgress, type InstalledModel } from './modelStore';
 import { Markdown } from './Markdown';
 import { SvgCard } from './SvgCard'; // 예전에 만든 일러스트 표시용
 import { UpdateBanner, checkForUpdateInteractive, describeAppVersion } from './UpdateBanner';
-import { loadChat, saveChat } from './storage';
+import { loadChatLibrary, saveChatLibrary } from './storage';
 import { colors } from './theme';
 import { describeVision, useVision, type VisionStatus } from './useVision';
 import { deleteImages, pickImage, type ImageSource } from './vision';
@@ -54,7 +56,6 @@ import { isOcrAvailable, isScanAvailable, recognizeText, scanText } from '../mod
 import * as ImagePicker from 'expo-image-picker';
 import { clearTempFiles, storageBreakdown } from './storageInfo';
 import { DownloadCancelled, checkSmallerModel, downloadModel, formatDownloadEta, type ModelUpgrade } from './modelDownload';
-import type { ImportProgress } from './modelStore';
 
 const uid = () => `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
 
@@ -75,17 +76,26 @@ const DRAW_INTENT =
 
 export function ChatScreen({ model, settings, gpuInfo, initialInput = '', onChangeSettings, onRemoveModel, onModelReplaced }: Props) {
   const { fontScale } = useWindowDimensions();
-  const [messages, setMessages] = useState<ChatMessage[]>(() => loadChat());
-  const [input, setInput] = useState(initialInput);
+  const [library, setLibrary] = useState(loadChatLibrary);
+  const libraryRef = useRef(library);
+  const activeChat = library.chats.find((chat) => chat.id === library.activeId)!;
+  const { messages } = activeChat;
+  const activeTask = library.tasks.find((task) => task.id === activeChat.taskId);
+  const [scope, setScope] = useState<ChatScope>(activeTask?.id);
+  const [showLibrary, setShowLibrary] = useState(false);
+  const [input, setInput] = useState(initialInput || activeChat.draft?.input || '');
   const [streaming, setStreaming] = useState<string | null>(null);
   const [stats, setStats] = useState<GenStats | null>(null);
   const [showSettings, setShowSettings] = useState(false);
   const [reportItem, setReportItem] = useState<ChatMessage | null>(null);
   const [preview, setPreview] = useState<ImagePreview | null>(null);
-  const [pendingImage, setPendingImage] = useState<string | null>(null);
+  const [pendingImage, setPendingImage] = useState<string | null>(activeChat.draft?.image ?? null);
   /** 첨부한 사진의 OCR 결과. undefined = 읽는 중, null = 실패/불가, string = 결과(빈 문자열이면 글자 없음) */
   const [pendingOcr, setPendingOcr] = useState<string | null | undefined>(null);
   const ocrJob = useRef<Promise<string | null> | null>(null);
+  const workPending = useRef(false);
+  const conversationCache = useRef(Promise.resolve());
+  const [workingWithPhoto, setWorkingWithPhoto] = useState(false);
   const inputRef = useRef<ComponentRef<typeof TextInput>>(null);
   const listRef = useRef<FlatList<ChatMessage>>(null);
   const followLatest = useRef(true);
@@ -134,16 +144,34 @@ export function ChatScreen({ model, settings, gpuInfo, initialInput = '', onChan
     );
   };
 
-  useEffect(() => saveChat(messages), [messages]);
-
-  const busy = streaming !== null;
+  const busy = streaming !== null || workingWithPhoto;
   const canSend = !!input.trim() || !!pendingImage;
+
+  const updateLibrary = (next: ChatLibraryData, requireSaved = true) => {
+    const saved = saveChatLibrary(next);
+    if (!saved && requireSaved) {
+      Alert.alert('대화를 저장하지 못했어요', '기기 저장 공간을 확인하고 다시 시도해 주세요.');
+      return false;
+    }
+    libraryRef.current = next;
+    setLibrary(next);
+    return true;
+  };
+
+  const setMessages = (update: ChatMessage[] | ((previous: ChatMessage[]) => ChatMessage[])) => {
+    const previous = libraryRef.current;
+    updateLibrary({ ...previous, chats: previous.chats.map((chat) => chat.id === activeChat.id ? {
+      ...chat, messages: typeof update === 'function' ? update(chat.messages) : update, draft: undefined, updatedAt: Date.now(),
+    } : chat) }, false);
+  };
 
   const clearPending = () => {
     setPendingImage(null);
     setPendingOcr(null);
     ocrJob.current = null;
   };
+
+  const readOcr = (uri: string) => isOcrAvailable() ? recognizeText(uri).then((r) => r.text).catch(() => null) : Promise.resolve(null);
 
   /** 사진을 고르면 바로 OCR 을 돌려 둔다 (보통 1초 안팎) */
   const startOcr = (uri: string) => {
@@ -153,9 +181,7 @@ export function ChatScreen({ model, settings, gpuInfo, initialInput = '', onChan
       return;
     }
     setPendingOcr(undefined);
-    const job = recognizeText(uri)
-      .then((r) => r.text)
-      .catch(() => null);
+    const job = readOcr(uri);
     ocrJob.current = job;
     job.then((t) => {
       if (ocrJob.current === job) setPendingOcr(t);
@@ -163,10 +189,13 @@ export function ChatScreen({ model, settings, gpuInfo, initialInput = '', onChan
   };
 
   const attach = () => {
-    if (busy) return;
+    if (workPending.current) return;
     // 이미지 인식(Gemma 비전)이 없어도 OCR 이 있으면 사진의 글자로 답할 수 있다
     if (!isOcrAvailable() && !vision.ensureReady()) return;
     const go = async (src: ImageSource) => {
+      if (workPending.current || libraryRef.current.activeId !== activeChat.id) return;
+      workPending.current = true;
+      setWorkingWithPhoto(true);
       try {
         const uri = await pickImage(src);
         if (uri) {
@@ -175,6 +204,9 @@ export function ChatScreen({ model, settings, gpuInfo, initialInput = '', onChan
         }
       } catch (e: any) {
         Alert.alert('사진', String(e?.message ?? e));
+      } finally {
+        workPending.current = false;
+        setWorkingWithPhoto(false);
       }
     };
     const buttons: AlertButton[] = [
@@ -190,7 +222,9 @@ export function ChatScreen({ model, settings, gpuInfo, initialInput = '', onChan
 
   /** 실시간 글자 스캔: 카메라 화면에서 바로 글자를 읽어 대화에 넣는다 (사진을 찍지 않으므로 셔터 소리 없음) */
   const scanLive = async () => {
-    if (busy) return;
+    if (workPending.current || libraryRef.current.activeId !== activeChat.id) return;
+    workPending.current = true;
+    setWorkingWithPhoto(true);
     try {
       const perm = await ImagePicker.requestCameraPermissionsAsync();
       if (!perm.granted) {
@@ -214,14 +248,19 @@ export function ChatScreen({ model, settings, gpuInfo, initialInput = '', onChan
       ]);
     } catch (e: any) {
       Alert.alert('글자 스캔', String(e?.message ?? e));
+    } finally {
+      workPending.current = false;
+      setWorkingWithPhoto(false);
     }
   };
 
   /** 첨부 사진의 글자만 바로 보여 준다 (Gemma 를 거치지 않음) */
   const readTextOnly = async () => {
-    if (!pendingImage || busy) return;
+    if (!pendingImage || workPending.current) return;
+    workPending.current = true;
+    setWorkingWithPhoto(true);
     const image = pendingImage;
-    const text = (await ocrJob.current) ?? null;
+    const text = await (ocrJob.current ?? readOcr(image));
     clearPending();
     followLatest.current = true;
     setMessages((prev) => [
@@ -239,11 +278,13 @@ export function ChatScreen({ model, settings, gpuInfo, initialInput = '', onChan
               : '사진에서 글자를 찾지 못했습니다.',
       },
     ]);
+    workPending.current = false;
+    setWorkingWithPhoto(false);
   };
 
   const send = async () => {
     const text = input.trim();
-    if (!canSend || busy) return;
+    if (!canSend || workPending.current) return;
     // 그림 요청은 모델이 그린 척 하지 않도록 바로 안내한다 (그림 기능은 앱 용량·메모리 부담으로 뺐다)
     if (!pendingImage && DRAW_INTENT.test(text)) {
       followLatest.current = true;
@@ -271,22 +312,27 @@ export function ChatScreen({ model, settings, gpuInfo, initialInput = '', onChan
       content: text || (pendingImage ? '이 사진에 무엇이 있는지 설명하고, 보이는 글자가 있으면 읽어 주세요.' : ''),
       ...(pendingImage ? { image: pendingImage } : {}),
     };
-    if (pendingImage) {
-      const ocr = (await ocrJob.current) ?? null; // 아직 읽는 중이면 끝날 때까지 기다린다 (보통 1초 안팎)
-      if (ocr) userMsg.ocr = ocr;
-      // 이미지 인식이 준비 안 됐고 글자도 없으면, 이미지 인식 파일 안내를 띄운다
-      if (vision.status.kind !== 'ready' && !ocr && !vision.ensureReady()) return;
-    }
-    const history = [...messages, userMsg];
-    followLatest.current = true;
-    setMessages(history);
-    setInput('');
-    clearPending();
-    setStreaming('요청을 확인하는 중…');
-    setStats(null);
-    await activateKeepAwakeAsync('gen');
+    workPending.current = true;
+    let keptAwake = false;
     try {
-      // 안전 검사: 요청 + 사진 속 글자, 최근 사용자 말 2개를 함께 본다 (나눠서 묻는 우회 방지)
+      if (pendingImage) {
+        setWorkingWithPhoto(true);
+        const ocr = await (ocrJob.current ?? readOcr(pendingImage));
+        if (ocr) userMsg.ocr = ocr;
+        if (vision.status.kind !== 'ready' && !ocr && !vision.ensureReady()) return;
+        setWorkingWithPhoto(false);
+      }
+      const history = [...messages, userMsg];
+      followLatest.current = true;
+      setMessages(history);
+      setInput('');
+      clearPending();
+      setStreaming('요청을 확인하는 중…');
+      setStats(null);
+      await activateKeepAwakeAsync('gen');
+      keptAwake = true;
+      await conversationCache.current;
+      // 안전 검사는 현재 대화의 최근 요청과 첨부 사진에서 읽은 글자를 함께 확인한다.
       const earlier = messages
         .filter((m) => m.role === 'user' && !m.blocked)
         .slice(-2)
@@ -324,20 +370,84 @@ export function ChatScreen({ model, settings, gpuInfo, initialInput = '', onChan
         Alert.alert('생성 오류', String(e?.message ?? e));
       }
     } finally {
-      deactivateKeepAwake('gen');
+      if (keptAwake) deactivateKeepAwake('gen');
+      workPending.current = false;
+      setWorkingWithPhoto(false);
       setStreaming(null);
     }
   };
 
-  const newChat = () => {
-    if (busy) return;
+  const restoreConversation = (target: Conversation) => {
     followLatest.current = true;
-    setMessages([]);
     setStats(null);
+    setInput(target.draft?.input ?? '');
     clearPending();
-    deleteImages();
-    deletePictures();
-    resetConversationCache().catch(() => {});
+    if (target.draft?.image) {
+      setPendingImage(target.draft.image);
+      startOcr(target.draft.image);
+    }
+    conversationCache.current = conversationCache.current.then(resetConversationCache).catch(() => {});
+  };
+
+  const activateConversation = (next: ChatLibraryData, target: Conversation) => {
+    if (workPending.current) return;
+    if (activeChat.id !== target.id) {
+      const draft = input.trim() || pendingImage ? { input, image: pendingImage } : undefined;
+      const chats = next.chats.map((chat) => chat.id === activeChat.id ? { ...chat, draft } : chat);
+      if (!updateLibrary({ ...next, chats, activeId: target.id })) return;
+      restoreConversation(target);
+    }
+    Keyboard.dismiss();
+    setShowLibrary(false);
+  };
+
+  const newChat = (taskId: string | null) => {
+    const current = libraryRef.current;
+    if (activeChat.taskId === taskId && !hasConversationContent(activeChat) && !input.trim() && !pendingImage) {
+      setShowLibrary(false);
+      return;
+    }
+    const next = makeConversation(uid(), taskId);
+    activateConversation({ ...current, chats: [...current.chats, next] }, next);
+  };
+
+  const createTask = (name: string) => {
+    const previous = libraryRef.current;
+    const task = { id: uid(), name, done: false };
+    if (!workPending.current && updateLibrary({ ...previous, tasks: [...previous.tasks, task] })) setScope(task.id);
+  };
+
+  const changeTask = (id: string, change: Partial<Pick<ChatTask, 'name' | 'done'>>) => {
+    const previous = libraryRef.current;
+    if (!workPending.current) updateLibrary({ ...previous, tasks: previous.tasks.map((task) => task.id === id ? { ...task, ...change } : task) });
+  };
+
+  const deleteTask = (id: string) => {
+    if (!workPending.current && updateLibrary(removeTask(libraryRef.current, id)) && scope === id) setScope(null);
+  };
+
+  const changeChat = (id: string, change: Partial<Pick<Conversation, 'name' | 'pinned' | 'taskId'>>) => {
+    const previous = libraryRef.current;
+    if (!workPending.current) updateLibrary({ ...previous, chats: previous.chats.map((chat) => chat.id === id ? { ...chat, ...change } : chat) });
+  };
+
+  const deleteChat = (id: string) => {
+    if (workPending.current) return;
+    const previous = libraryRef.current;
+    const deletingActive = id === previous.activeId;
+    const chats = previous.chats.filter((chat) => chat.id !== id);
+    const replacement = deletingActive ? chats.find((chat) => chat.taskId === activeChat.taskId) ?? makeConversation(uid(), activeChat.taskId) : activeChat;
+    if (deletingActive && !chats.includes(replacement)) chats.push(replacement);
+    if (!updateLibrary({ ...previous, chats, activeId: replacement.id })) return;
+    if (deletingActive) restoreConversation(replacement);
+    const remainingImages = chats.flatMap((chat) => [chat.draft?.image, ...chat.messages.map((msg) => msg.image)]);
+    if (!deletingActive) remainingImages.push(pendingImage);
+    try {
+      deleteImages(remainingImages.filter((uri): uri is string => !!uri));
+      deletePictures(chats.flatMap((chat) => chat.messages.flatMap((msg) => msg.picture ? [msg.picture] : [])));
+    } catch (error) {
+      console.warn('Could not clean up chat attachments', error);
+    }
   };
 
   const data: ChatMessage[] =
@@ -358,6 +468,21 @@ export function ChatScreen({ model, settings, gpuInfo, initialInput = '', onChan
   };
   const scrollToLatest = () => {
     if (followLatest.current && data.length > 0) listRef.current?.scrollToEnd({ animated: false });
+  };
+  const libraryProps = {
+    library, scope, busy,
+    onScope: setScope,
+    onOpen: (id: string) => {
+      const previous = libraryRef.current;
+      const target = previous.chats.find((chat) => chat.id === id);
+      if (target) activateConversation(previous, target);
+    },
+    onNew: newChat,
+    onTaskCreate: createTask,
+    onTaskChange: changeTask,
+    onTaskRemove: deleteTask,
+    onChatChange: changeChat,
+    onChatRemove: deleteChat,
   };
 
   const renderWorkspace = (size: AreaSize, division: Division | null) => {
@@ -383,56 +508,33 @@ export function ChatScreen({ model, settings, gpuInfo, initialInput = '', onChan
       }]}>
         {showSidebar ? (
           <View style={[styles.sidebar, { width: layout.sidebarWidth, marginRight: layout.sidebarGap }]}>
-            <ScrollView contentContainerStyle={styles.sidebarContent} keyboardShouldPersistTaps="handled">
-              <View style={styles.identity}>
-                <BrandMark />
-                <View style={styles.flex}>
-                  <Text style={styles.title} accessibilityRole="header">{APP_NAME}</Text>
-                  <Text style={styles.subtitle}>오프라인 AI</Text>
-                </View>
-              </View>
-              <Pressable
-                accessibilityRole="button"
-                onPress={newChat}
-                disabled={busy}
-                style={[styles.sidebarPrimary, busy && styles.off]}
-              >
-                <Text style={styles.sendText}>＋ 새 대화</Text>
-              </Pressable>
-              <View style={styles.sidebarActions}>
-                <ChatAction icon="📷" label="사진으로 질문" onPress={attach} disabled={busy} />
-                <ChatAction icon="⚙" label="설정" onPress={openSettings} disabled={busy} />
-              </View>
-              <View style={styles.modelInfo}>
-                <Text style={styles.shortcutTitle}>Gemma 3 4B</Text>
-                <Text style={styles.subtitle}>
-                  {gpuInfo}{stats ? ` · ${stats.tokPerSec.toFixed(1)} tok/s` : ''}
-                </Text>
-              </View>
-            </ScrollView>
+            <ChatLibrary {...libraryProps} onSettings={openSettings} />
           </View>
         ) : null}
         <View style={styles.conversation}>
           <View style={splitTranscript ? { height: layout.transcriptHeight, overflow: 'hidden' } : styles.transcript}>
             <View style={styles.header}>
-              {!showSidebar ? <BrandMark /> : null}
+              {!showSidebar ? (
+                <Pressable accessibilityRole="button" accessibilityLabel="대화와 테스크 메뉴" style={styles.hBtn}
+                  onPress={() => { Keyboard.dismiss(); setShowLibrary(true); }}>
+                  <Text style={styles.hBtnText}>☰</Text>
+                </Pressable>
+              ) : null}
               <View style={styles.flex}>
                 <Text style={styles.title} accessibilityRole="header" numberOfLines={1}>
-                  {showSidebar ? '대화' : APP_NAME}
+                  {hasConversationContent(activeChat) ? conversationName(activeChat) : activeTask?.name ?? APP_NAME}
                 </Text>
-                {!showSidebar ? (
-                  <Text style={styles.subtitle} numberOfLines={1}>
-                    Gemma 3 4B · {gpuInfo}
-                    {stats ? ` · ${stats.tokPerSec.toFixed(1)} tok/s` : ''}
-                  </Text>
-                ) : null}
+                <Text style={styles.subtitle} numberOfLines={1}>
+                  {activeTask ? `${activeTask.name} · ` : ''}Gemma 3 4B · {gpuInfo}
+                  {stats ? ` · ${stats.tokPerSec.toFixed(1)} tok/s` : ''}
+                </Text>
               </View>
               {!showSidebar ? (
                 <>
                   <Pressable
                     accessibilityRole="button"
                     accessibilityLabel="새 대화"
-                    onPress={newChat}
+                    onPress={() => newChat(activeChat.taskId)}
                     style={[styles.hBtn, busy && styles.off]}
                     disabled={busy}
                   >
@@ -471,6 +573,7 @@ export function ChatScreen({ model, settings, gpuInfo, initialInput = '', onChan
             ) : null}
 
             <FlatList
+              key={activeChat.id}
               ref={listRef}
               style={styles.flex}
               contentContainerStyle={[styles.list, data.length === 0 && styles.emptyList]}
@@ -575,7 +678,7 @@ export function ChatScreen({ model, settings, gpuInfo, initialInput = '', onChan
                       <Text style={styles.pendingBtnText}>글자 읽기</Text>
                     </Pressable>
                   ) : null}
-                  <Pressable onPress={clearPending} style={styles.pendingX} accessibilityRole="button" accessibilityLabel="첨부 사진 제거">
+                  <Pressable onPress={clearPending} disabled={busy} style={styles.pendingX} accessibilityRole="button" accessibilityLabel="첨부 사진 제거">
                     <Text style={styles.pendingXText}>✕</Text>
                   </Pressable>
                 </View>
@@ -604,11 +707,11 @@ export function ChatScreen({ model, settings, gpuInfo, initialInput = '', onChan
                   </Pressable>
                   <Pressable
                     accessibilityRole="button"
-                    style={[styles.send, busy && { backgroundColor: colors.danger }, !busy && !canSend && styles.off]}
-                    onPress={busy ? () => stopGeneration() : send}
-                    disabled={!busy && !canSend}
+                    style={[styles.send, streaming !== null && { backgroundColor: colors.danger }, (workingWithPhoto || (!busy && !canSend)) && styles.off]}
+                    onPress={streaming !== null ? stopGeneration : send}
+                    disabled={workingWithPhoto || (!busy && !canSend)}
                   >
-                    <Text style={styles.sendText}>{busy ? '중지' : '전송'}</Text>
+                    <Text style={styles.sendText}>{streaming !== null ? '중지' : '전송'}</Text>
                   </Pressable>
                 </View>
               </View>
@@ -624,6 +727,24 @@ export function ChatScreen({ model, settings, gpuInfo, initialInput = '', onChan
       <SafeAreaView style={styles.flex}>
         <FoldAwareArea>{renderWorkspace}</FoldAwareArea>
       </SafeAreaView>
+
+      {showLibrary ? (
+        <Modal onRequestClose={() => setShowLibrary(false)} animationType="slide" presentationStyle="fullScreen">
+          <SafeAreaView style={styles.libraryArea}>
+            <KeyboardAvoidingView style={styles.flex} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+              <FoldAwareArea>{(size, division) => {
+                const insets = getFoldInsets(size, division);
+                return (
+                  <View style={[styles.flex, { paddingTop: insets.top, paddingRight: insets.right,
+                    paddingBottom: insets.bottom, paddingLeft: insets.left }]}>
+                    <ChatLibrary {...libraryProps} onClose={() => setShowLibrary(false)} />
+                  </View>
+                );
+              }}</FoldAwareArea>
+            </KeyboardAvoidingView>
+          </SafeAreaView>
+        </Modal>
+      ) : null}
 
       {reportItem ? <ReportContent item={reportItem} onClose={() => setReportItem(null)} /> : null}
 
@@ -654,14 +775,6 @@ export function ChatScreen({ model, settings, gpuInfo, initialInput = '', onChan
         />
       ) : null}
     </KeyboardAvoidingView>
-  );
-}
-
-function BrandMark() {
-  return (
-    <View style={styles.brandMark} accessible={false}>
-      <Text style={styles.brandGlyph}>✦</Text>
-    </View>
   );
 }
 
@@ -995,31 +1108,11 @@ const styles = StyleSheet.create({
   flex: { flex: 1 },
   workspace: { flex: 1, flexDirection: 'row' },
   sidebar: {
-    backgroundColor: colors.accentSoft,
-    borderTopRightRadius: 24,
-    borderBottomRightRadius: 24,
+    borderRightWidth: 1,
+    borderRightColor: colors.border,
     overflow: 'hidden',
   },
-  sidebarContent: {
-    flexGrow: 1,
-    alignSelf: 'center',
-    width: '100%',
-    maxWidth: 278,
-    padding: 16,
-    gap: 16,
-  },
-  identity: { flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 6 },
-  sidebarPrimary: {
-    minHeight: 48,
-    backgroundColor: colors.accent,
-    borderRadius: 14,
-    paddingHorizontal: 10,
-    paddingVertical: 8,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  sidebarActions: { gap: 8 },
-  modelInfo: { marginTop: 'auto', paddingTop: 14, borderTopWidth: 1, borderTopColor: colors.border },
+  libraryArea: { flex: 1, backgroundColor: colors.bg },
   conversation: { flex: 1, minWidth: 0 },
   transcript: { flex: 1, minHeight: 0 },
   header: {
@@ -1032,15 +1125,6 @@ const styles = StyleSheet.create({
     borderBottomColor: colors.border,
     gap: 6,
   },
-  brandMark: {
-    width: 36,
-    height: 36,
-    borderRadius: 12,
-    backgroundColor: colors.accentSoft,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  brandGlyph: { fontSize: 23, color: colors.accentText },
   title: { fontSize: 17, fontWeight: '800', color: colors.text },
   subtitle: { fontSize: 12, color: colors.muted, marginTop: 2 },
   hBtn: {
