@@ -1,7 +1,8 @@
 # 그림 모델 용량 줄이기: Counterfeit-V3.0 원본 가중치 → Core ML(split_einsum_v2) + 6bit 팔레트 압축 → iPhone 용 패키지
 #   1) convert (Linux, 메모리 16GB): diffusers 형식으로 바꾼 뒤 Apple torch2coreml 로 변환·6bit 압축 (.mlpackage)
-#   2) package (macOS): Neural Engine 용으로 컴파일(.mlmodelc), 안전 검사·토크나이저 추가, Release 에 올리고 sd.json 교체
-# 결과 크기 목표 ≈ 1.3~1.5GB (fp16 변환본 2.7GB)
+#      안전 검사(SafetyChecker)도 직접 변환해 6bit 로 줄인다 (Apple fp16 본은 0.58GB)
+#   2) package (macOS): Neural Engine 용으로 컴파일(.mlmodelc), 토크나이저 추가, Release 에 올리고 sd.json 교체
+# 결과 크기 목표 ≈ 1.0~1.1GB (fp16 변환본 2.5GB)
 name: Convert image model to 6-bit
 
 on:
@@ -16,9 +17,9 @@ permissions:
 
 env:
   SRC_REPO: gsdf/Counterfeit-V3.0
-  MODEL_ID: counterfeit-v3-6bit
-  MODEL_DESC: Counterfeit-V3.0 (SD 1.5 anime/illustration fine-tune, Core ML split_einsum_v2, 6-bit palettized)
-  ASSET: counterfeit-v3-6bit-split-einsum-v2.zip
+  MODEL_ID: counterfeit-v3-6bit-sc6
+  MODEL_DESC: Counterfeit-V3.0 (SD 1.5 anime/illustration fine-tune, Core ML split_einsum_v2, 6-bit palettized incl. safety checker)
+  ASSET: counterfeit-v3-6bit-sc6-split-einsum-v2.zip
   ML_SD_COMMIT: ea2805d
   TAG: model-v1
 
@@ -86,6 +87,13 @@ jobs:
               ck = hf_hub_download(repo, pick, token=tok)
               pipe = StableDiffusionPipeline.from_single_file(
                   ck, config='stable-diffusion-v1-5/stable-diffusion-v1-5', load_safety_checker=False, torch_dtype=torch.float32)
+          # 안전 검사기(부적절한 그림 걸러내기)를 같이 넣어 변환 대상에 포함시킨다
+          from diffusers.pipelines.stable_diffusion.safety_checker import StableDiffusionSafetyChecker
+          from transformers import CLIPImageProcessor
+          sc = StableDiffusionSafetyChecker.from_pretrained('CompVis/stable-diffusion-safety-checker', torch_dtype=torch.float32)
+          fe = CLIPImageProcessor.from_pretrained('openai/clip-vit-base-patch32')
+          comps = {k: v for k, v in pipe.components.items() if k not in ('safety_checker', 'feature_extractor')}
+          pipe = StableDiffusionPipeline(**comps, safety_checker=sc, feature_extractor=fe, requires_safety_checker=True)
           pipe.save_pretrained('counterfeit-v3', safe_serialization=True)
           PY
           du -sh counterfeit-v3/* | tr '\n' ' '
@@ -96,7 +104,7 @@ jobs:
           set +e
           python3 -m python_coreml_stable_diffusion.torch2coreml \
             --model-version "$PWD/counterfeit-v3" \
-            --convert-text-encoder --convert-unet --convert-vae-decoder \
+            --convert-text-encoder --convert-unet --convert-vae-decoder --convert-safety-checker \
             --attention-implementation SPLIT_EINSUM_V2 \
             --quantize-nbits 6 \
             -o out > convert.log 2>&1
@@ -107,6 +115,16 @@ jobs:
             echo "::error title=torch2coreml rc=$rc::$(grep -v '^\s*$' convert.log | tail -25 | cut -c1-300 | sed ':a;N;$!ba;s/\n/%0A/g')"
             exit $rc
           fi
+          # torch2coreml 은 텍스트 인코더·Unet 만 줄이므로 안전 검사기는 같은 방식(6bit k-means 팔레트)으로 직접 줄인다
+          python3 - <<'PY'
+          import glob, coremltools as ct
+          p = glob.glob('out/*_safety_checker.mlpackage')[0]
+          m = ct.models.MLModel(p, compute_units=ct.ComputeUnit.CPU_ONLY)
+          cfg = ct.optimize.coreml.OptimizationConfig(
+              global_config=ct.optimize.coreml.OpPalettizerConfig(mode='kmeans', nbits=6),
+              op_type_configs={'gather': None})
+          ct.optimize.coreml.palettize_weights(m, config=cfg).save(p)
+          PY
           ls -la out
           echo "::notice title=mlpackages::$(du -sh out/*.mlpackage | tr '\n' ' ')"
 
@@ -131,7 +149,7 @@ jobs:
       - name: Compile for Neural Engine
         run: |
           mkdir -p res
-          for kind in text_encoder:TextEncoder unet:Unet vae_decoder:VAEDecoder; do
+          for kind in text_encoder:TextEncoder unet:Unet vae_decoder:VAEDecoder safety_checker:SafetyChecker; do
             src=$(ls -d pkgs/*_"${kind%%:*}".mlpackage | head -1)
             [ -n "$src" ] || { echo "::error::${kind%%:*} mlpackage 없음"; ls pkgs; exit 1; }
             xcrun coremlcompiler compile "$src" tmpc
@@ -139,11 +157,10 @@ jobs:
           done
           ls res
 
-      - name: Add Apple SafetyChecker and tokenizer
+      - name: Add tokenizer
         run: |
           gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --pattern sd15-palettized-split-einsum-v2.zip --pattern sd.json
-          unzip -q sd15-palettized-split-einsum-v2.zip '*SafetyChecker.mlmodelc/*' '*vocab.json' '*merges.txt' -d apple
-          cp -R "$(find apple -type d -name SafetyChecker.mlmodelc -not -path '*/__MACOSX/*' | head -1)" res/
+          unzip -q sd15-palettized-split-einsum-v2.zip '*vocab.json' '*merges.txt' -d apple
           cp "$(find apple -name vocab.json -not -path '*/__MACOSX/*' | head -1)" res/
           cp "$(find apple -name merges.txt -not -path '*/__MACOSX/*' | head -1)" res/
           UNET=$(du -sm res/Unet.mlmodelc | cut -f1)
