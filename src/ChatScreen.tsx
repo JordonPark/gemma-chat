@@ -81,6 +81,13 @@ const DRAW_INTENT =
 /** 사진 설명이 걸려도 기기 분석 결과조차 보여 주면 안 되는 범주 */
 const SEVERE = new Set(['sexual_minors', 'sexual_explicit', 'violence', 'extremism', 'self_harm']);
 
+/** 설정의 "대화 길이": 대화 기억 길이(n_ctx)와 한 번에 답하는 최대 길이를 함께 정한다 */
+const LENGTH_PRESETS = [
+  { label: '적게', nCtx: 2048, maxNewTokens: 512, hint: '짧은 대화·짧은 답. 메모리를 가장 적게 쓰고 가장 빠릅니다.' },
+  { label: '중간', nCtx: 4096, maxNewTokens: 1024, hint: '보통 대화에 알맞습니다 (기본값).' },
+  { label: '많이', nCtx: 8192, maxNewTokens: 2048, hint: '긴 대화를 더 오래 기억하고 긴 답(풀이·글쓰기)도 끝까지 씁니다. 메모리를 더 쓰고 조금 느려질 수 있어요.' },
+] as const;
+
 export function ChatScreen({ settings, gpuInfo, initialInput = '', onChangeSettings }: Props) {
   const { fontScale } = useWindowDimensions();
   const [library, setLibrary] = useState(loadChatLibrary);
@@ -871,23 +878,27 @@ function SettingsModal({
           onChangeText={(v) => setS({ ...s, systemPrompt: v })}
         />
 
-        <Text style={styles.label}>컨텍스트 길이 (n_ctx, 변경 시 모델 재로딩)</Text>
-        <TextInput
-          style={styles.field}
-          keyboardType="number-pad"
-          defaultValue={String(s.nCtx)}
-          onEndEditing={(e) => setS({ ...s, nCtx: Math.min(32768, Math.max(1024, num(e.nativeEvent.text, s.nCtx))) })}
-        />
-
-        <Text style={styles.label}>최대 생성 토큰</Text>
-        <TextInput
-          style={styles.field}
-          keyboardType="number-pad"
-          defaultValue={String(s.maxNewTokens)}
-          onEndEditing={(e) =>
-            setS({ ...s, maxNewTokens: Math.min(4096, Math.max(32, num(e.nativeEvent.text, s.maxNewTokens))) })
-          }
-        />
+        <Text style={styles.label}>대화 길이</Text>
+        <View style={styles.segment}>
+          {LENGTH_PRESETS.map((p) => {
+            const on = s.nCtx === p.nCtx && s.maxNewTokens === p.maxNewTokens;
+            return (
+              <Pressable
+                key={p.label}
+                accessibilityRole="button"
+                accessibilityState={{ selected: on }}
+                onPress={() => setS({ ...s, nCtx: p.nCtx, maxNewTokens: p.maxNewTokens })}
+                style={[styles.segmentItem, on && styles.segmentOn]}
+              >
+                <Text style={[styles.segmentText, on && styles.segmentTextOn]}>{p.label}</Text>
+              </Pressable>
+            );
+          })}
+        </View>
+        <Text style={styles.hint}>
+          {(LENGTH_PRESETS.find((p) => p.nCtx === s.nCtx && p.maxNewTokens === s.maxNewTokens)?.hint ??
+            `직접 정한 값: 대화 기억 ${s.nCtx} · 답 최대 ${s.maxNewTokens} 토큰`) + ' 바꾸면 모델을 다시 불러옵니다.'}
+        </Text>
 
         <Text style={styles.label}>temperature</Text>
         <TextInput
@@ -1156,6 +1167,20 @@ const styles = StyleSheet.create({
   settings: { padding: 24, gap: 10, width: '100%', maxWidth: 600, alignSelf: 'center' },
   settingsTitle: { fontSize: 28, fontWeight: '800', color: colors.text, marginBottom: 8 },
   settingsHeader: { flexDirection: 'row', alignItems: 'center', gap: 12 },
+  segment: {
+    flexDirection: 'row',
+    backgroundColor: colors.card,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: colors.border,
+    padding: 4,
+    gap: 4,
+    marginTop: 6,
+  },
+  segmentItem: { flex: 1, minHeight: 44, borderRadius: 10, alignItems: 'center', justifyContent: 'center' },
+  segmentOn: { backgroundColor: colors.accent },
+  segmentText: { fontSize: 15, fontWeight: '600', color: colors.text },
+  segmentTextOn: { color: '#fff' },
   settingsClose: {
     width: 40,
     height: 40,
