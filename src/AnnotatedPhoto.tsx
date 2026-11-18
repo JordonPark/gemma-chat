@@ -97,7 +97,9 @@ export function AnnotationLayer({
         const w = Math.max(12, l.box.width * W);
         const h = Math.max(10, l.box.height * H);
         if (showTranslation && tr) {
-          const fontSize = Math.max(8, Math.min(28, h * 0.72));
+          // 글자 크기는 줄 높이와 너비 둘 다에 맞춘다 (세로로 쓴 글자처럼 좁고 긴 상자에서 너무 커지지 않게, 최대 2줄)
+          const byWidth = ((w + 4) * 2) / Math.max(2, Array.from(tr).length);
+          const fontSize = Math.max(8, Math.min(22, h * 0.72, byWidth));
           return (
             <View key={`t${i}`} style={[styles.trBox, { left: left - 2, top: top - 1, minWidth: w + 4, minHeight: h + 2 }]}>
               <Text style={[styles.trText, { fontSize, lineHeight: fontSize * 1.2 }]} numberOfLines={2}>

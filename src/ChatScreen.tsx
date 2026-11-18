@@ -875,16 +875,10 @@ function SettingsModal({
       presentationStyle="pageSheet"
       supportedOrientations={['portrait', 'landscape']}
     >
-      <ScrollView
-        style={styles.settingsBackground}
-        contentContainerStyle={styles.settings}
-        contentInsetAdjustmentBehavior="automatic"
-        automaticallyAdjustKeyboardInsets
-        keyboardShouldPersistTaps="handled"
-      >
-        <View style={styles.settingsHeader}>
+      <SafeAreaView style={[styles.flex, styles.settingsBackground]} edges={['top', 'left', 'right']}>
+        {/* 제목과 ✕ 는 위에 고정한다 (아래로 스크롤해도 항상 보이게). ✕ 는 바꾼 값을 저장하지 않고 닫는다 */}
+        <View style={styles.settingsBar}>
           <Text style={[styles.settingsTitle, styles.flex]}>설정</Text>
-          {/* 바꾼 값은 저장하지 않고 닫는다 (아래 '취소'와 같음) */}
           <Pressable
             onPress={onClose}
             accessibilityRole="button"
@@ -895,6 +889,12 @@ function SettingsModal({
             <Text style={styles.settingsCloseText}>✕</Text>
           </Pressable>
         </View>
+      <ScrollView
+        style={styles.settingsBackground}
+        contentContainerStyle={styles.settings}
+        automaticallyAdjustKeyboardInsets
+        keyboardShouldPersistTaps="handled"
+      >
 
         <Text style={styles.label}>말투</Text>
         <View style={styles.segment}>
@@ -997,6 +997,7 @@ function SettingsModal({
         <View style={{ height: 16 }} />
         <LegalInfo />
       </ScrollView>
+      </SafeAreaView>
     </Modal>
   );
 }
@@ -1217,7 +1218,19 @@ const styles = StyleSheet.create({
   settingsBackground: { backgroundColor: colors.bg },
   settings: { padding: 24, gap: 10, width: '100%', maxWidth: 600, alignSelf: 'center' },
   settingsTitle: { fontSize: 28, fontWeight: '800', color: colors.text, marginBottom: 8 },
-  settingsHeader: { flexDirection: 'row', alignItems: 'center', gap: 12 },
+  settingsBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    paddingHorizontal: 24,
+    paddingTop: 16,
+    paddingBottom: 8,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: colors.border,
+    width: '100%',
+    maxWidth: 648,
+    alignSelf: 'center',
+  },
   segment: {
     flexDirection: 'row',
     backgroundColor: colors.card,
