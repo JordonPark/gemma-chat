@@ -48,3 +48,7 @@ yarn-error.*
 *.gguf
 *.gguf.part*
 /model-dist/
+
+# Python
+__pycache__/
+*.pyc
