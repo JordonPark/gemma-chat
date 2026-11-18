@@ -5,11 +5,12 @@ import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 import { ChatScreen } from './src/ChatScreen';
 import { FoldAwareArea } from './src/FoldAwareArea';
 import { getFoldInsets } from './src/foldLayout';
+import { LegalConsent } from './src/LegalInfo';
 import { LoadingScreen } from './src/LoadingScreen';
 import { SetupScreen } from './src/SetupScreen';
 import { loadModel, unloadModel, type Settings } from './src/llm';
 import { deleteInstalledModels, findInstalledModel, type InstalledModel } from './src/modelStore';
-import { loadSettings, saveSettings } from './src/storage';
+import { acceptModelTerms, hasAcceptedModelTerms, loadSettings, saveSettings } from './src/storage';
 import { colors, isDark } from './src/theme';
 
 type Phase =
@@ -23,6 +24,7 @@ type Phase =
 const MIN_SPLASH_MS = 2500;
 
 export default function App() {
+  const [acceptedTerms, setAcceptedTerms] = useState(hasAcceptedModelTerms);
   const [settings, setSettings] = useState<Settings>(() => loadSettings());
   const [phase, setPhase] = useState<Phase>({ kind: 'scanning' });
   const launchAt = useRef(Date.now());
@@ -54,6 +56,7 @@ export default function App() {
   );
 
   useEffect(() => {
+    if (!acceptedTerms) return;
     (async () => {
       const m = await findInstalledModel();
       if (m) startModel(m, settings);
@@ -63,7 +66,7 @@ export default function App() {
       }
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [acceptedTerms]);
 
   const removeModel = async () => {
     await unloadModel();
@@ -79,7 +82,18 @@ export default function App() {
   };
 
   let body: React.ReactNode;
-  switch (phase.kind) {
+  if (!acceptedTerms) {
+    body = (
+      <LegalConsent onAccept={() => {
+        try {
+          acceptModelTerms();
+          setAcceptedTerms(true);
+        } catch {
+          Alert.alert('동의 내용을 저장할 수 없습니다.', '기기의 저장 공간을 확인하고 다시 시도해 주세요.');
+        }
+      }} />
+    );
+  } else switch (phase.kind) {
     case 'scanning':
       body = <LoadingScreen status="준비 중" />;
       break;

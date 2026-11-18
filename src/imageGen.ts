@@ -72,7 +72,8 @@ function findResourcesDir(d: Directory, depth = 0): Directory | null {
   const entries = d.list();
   const unet = entries.find((e): e is Directory => e instanceof Directory && /^Unet(Chunk1)?\.mlmodelc$/.test(e.name));
   // 진짜 모델 폴더인지: Unet 가중치가 있어야 한다 (macOS 가 zip 에 넣는 __MACOSX 사본 등은 건너뜀)
-  if (unet && new File(unet, 'weights', 'weight.bin').exists) return d;
+  if (unet && new File(unet, 'weights', 'weight.bin').exists
+      && new Directory(d, 'SafetyChecker.mlmodelc').exists) return d;
   for (const e of entries) {
     if (e instanceof Directory && !e.name.endsWith('.mlmodelc') && e.name !== '__MACOSX') {
       const r = findResourcesDir(e, depth + 1);

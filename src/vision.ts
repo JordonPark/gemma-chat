@@ -12,6 +12,7 @@ import * as ImagePicker from 'expo-image-picker';
 import { DownloadCancelled, MODEL_RELEASE_URL, speedMeter } from './modelDownload';
 import { RangedCancelled, downloadRanged } from './rangedDownload';
 import { ensureDir, formatBytes, isGguf, readMagic, toNativePath, type OnProgress } from './modelStore';
+import { APP_NAME } from './storeConfig';
 
 type VisionManifest = { format: number; name: string; size: number; sha256: string };
 
@@ -108,7 +109,7 @@ export type ImageSource = 'camera' | 'library';
 export async function pickImage(source: ImageSource): Promise<string | null> {
   if (source === 'camera') {
     const perm = await ImagePicker.requestCameraPermissionsAsync();
-    if (!perm.granted) throw new Error('카메라 권한이 필요합니다. 설정 › Gemma Chat 에서 카메라를 허용하세요.');
+    if (!perm.granted) throw new Error(`카메라 권한이 필요합니다. 설정 › ${APP_NAME}에서 카메라를 허용하세요.`);
   }
   const opts: ImagePicker.ImagePickerOptions = { mediaTypes: ['images'], quality: 1, exif: false };
   const r = source === 'camera' ? await ImagePicker.launchCameraAsync(opts) : await ImagePicker.launchImageLibraryAsync(opts);

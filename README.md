@@ -2,7 +2,7 @@
 
 `google/gemma-3-4b-it-qat-q4_0-gguf` 모델을 **기기 안에서만** 실행하는 챗봇 앱입니다.
 
-- **네트워크는 최초 1회만**: 앱을 처음 열면(Wi-Fi일 때 자동) 이 저장소의 GitHub Release에서 모델 조각을 받아 **기기 안에서 이어 붙이고 SHA-256으로 검증한 뒤 설치**합니다. 받다 끊기면 다음 실행 때 이어 받습니다. 설치가 끝나면 채팅은 **인터넷 없이** 기기 안에서만 처리됩니다.
+- **모델은 한 번 받기**. 첫 설치에서 용량을 확인하고 **다운로드 시작**을 누르면 GitHub Release의 모델을 받습니다. 받은 조각은 SHA-256으로 검증합니다. 다운로드를 중단한 경우 설치 화면에서 **이어서 받기**를 선택할 수 있습니다. 설치 후 채팅은 인터넷 없이 기기에서 처리됩니다.
 - **완전 오프라인 설치도 가능**: PC에서 git으로 받은 분할 파일을 USB 등으로 옮겨 넣으면 앱이 기기 안에서 풀어 설치합니다(앱의 "인터넷 없이 파일로 직접 설치"). Android는 `INTERNET` 권한을 빼고 빌드할 수도 있습니다(`npm run android:offline`).
 - **추론 엔진**: [llama.rn](https://github.com/mybigday/llama.rn)(llama.cpp). iOS는 Metal GPU를 쓰고, Android는 CPU를 쓰거나 Adreno OpenCL GPU를 선택해서 켤 수 있습니다.
 - **스택**: Expo SDK 58(React Native 0.88, New Architecture), TypeScript
@@ -209,7 +209,7 @@ Mac이 없으면 GitHub Actions의 macOS 서버가 **서명 없는 .ipa**를 빌
 5. **iPhone 설정:**
    - *설정 › 개인정보 보호 및 보안 › 개발자 모드*를 켜고 재시동합니다.
    - *설정 › 일반 › VPN 및 기기 관리*에서 내 Apple ID 개발자를 *신뢰*합니다.
-6. **모델:** Wi-Fi에서 앱을 열면 자동으로 받습니다. 인터넷 없이 넣으려면 iTunes(또는 Apple Devices) › iPhone › *파일 공유* › **Gemma Chat**에 `model-dist/`의 조각과 `SHA256SUMS`를 끌어다 놓고, 앱의 *인터넷 없이 파일로 직접 설치 › 이 파일들로 설치*를 누릅니다.
+6. **모델:** Wi-Fi에서 용량을 확인하고 다운로드를 시작합니다. 인터넷 없이 넣으려면 iTunes(또는 Apple Devices) › iPhone › *파일 공유* › **Gemma Chat**에 `model-dist/`의 조각과 `SHA256SUMS`를 끌어다 놓고, 앱의 *인터넷 없이 파일로 직접 설치 › 이 파일들로 설치*를 누릅니다.
 
 무료 Apple ID의 제약:
 - 설치한 앱은 **7일 후 만료**됩니다. Sideloadly로 다시 설치하면 되고, 앱 데이터(설치한 모델)는 유지됩니다.
@@ -247,7 +247,7 @@ npx eas-cli@latest build -p android --profile production
 
 ```
 App.tsx                 화면 상태 전환 (모델 검색 → 설치 → 로딩 → 채팅)
-src/modelDownload.ts    최초 1회 자동 다운로드 (GitHub Release, 조각별 검증, 이어받기)
+src/modelDownload.ts    최초 1회 모델 다운로드 (GitHub Release, 조각별 검증, 이어받기)
 src/modelStore.ts       수동 설치: 조각 이어 붙이기 / 압축 해제 / SHA-256 검증 / 설치 모델 탐색
 src/llm.ts              llama.rn 래퍼: 로드, Gemma 채팅 템플릿(jinja), 스트리밍, 컨텍스트 길이 맞추기
 src/ChatScreen.tsx      채팅 UI, 생성 중지, 설정(시스템 프롬프트, n_ctx, 토큰 수, temperature, GPU)
@@ -288,7 +288,43 @@ app.config.ts           OFFLINE_ONLY 빌드 시 INTERNET 제거, 파일 공유(i
 | 로딩 중 앱 종료 | RAM 부족입니다. 설정에서 n_ctx를 2048로 줄이고, iOS는 엔타이틀먼트를 확인하세요. |
 | Android에서 느림 | Snapdragon 8 Gen 2 이상(Adreno 7xx)이면 설정에서 GPU 가속을 켜 보세요. |
 
+## 스토어 제출용 빌드
+
+GitHub 테스트 빌드와 별도로 EAS의 `store` 프로필을 사용합니다. 이 프로필은 My Buddy를 기본 표시 이름으로 사용하며, OTA를 끄고 스토어 배포용으로 빌드합니다. 공개 이름을 변경하려면 EAS Production 환경의 `EXPO_PUBLIC_STORE_NAME`을 지정하세요.
+
+### 비공개 접수 서비스 배포
+
+Cloudflare 계정에서 D1과 Worker를 생성합니다. D1의 내용은 운영 계정의 콘솔이나 인증된 Wrangler만 읽을 수 있으며 공개 조회 경로는 없습니다.
+
+```bash
+cd support
+npx wrangler d1 create my-buddy-support
+# 출력된 database_id를 support/wrangler.jsonc의 database_id에 입력
+npx wrangler d1 migrations apply my-buddy-support --remote
+npx wrangler deploy
+```
+
+배포 결과로 나온 HTTPS 원본 주소를 EAS Production 환경에 `EXPO_PUBLIC_SUPPORT_BASE_URL`로 등록하세요. 경로 없이 등록합니다. Worker의 `/privacy`는 스토어의 개인정보처리방침 URL이고, `/support`는 지원 URL입니다. 운영 계정 소유자는 Cloudflare D1의 `inbox` 테이블에서 신고와 문의에 응답해야 합니다. `kind=support`인 경우 접수된 이메일로 회신할 수 있습니다. 삭제 요청은 접수번호로 해당 레코드를 찾아 처리합니다. 스케줄러는 30일이 지난 기록을 삭제합니다.
+
+### 제출 파일 준비
+
+```bash
+npx eas-cli@latest build --platform android --profile store
+npx eas-cli@latest build --platform ios --profile store
+```
+
+Android는 Play 업로드 키로 서명된 AAB를, iOS는 Apple 배포 인증서와 프로비저닝 프로파일로 서명된 빌드를 사용합니다. 제출 전에는 실제 기기에서 신고, 개인정보 문의, 콘텐츠 검사와 첫 다운로드를 확인하고, App Store Connect와 Play Console에서 개인정보·연령 등급을 실제 빌드 기준으로 작성하세요. 배포국가의 상표 및 앱 이름 등록 가능 여부를 확인하세요.
+
+기존 `model-v1` Release에도 라이선스 전문을 추가하려면 모델을 다시 빌드하지 않고 모델 라이선스 파일만 준비해 올릴 수 있습니다. 이후 자동 모델 배포에는 전문이 함께 포함됩니다.
+
+```bash
+mkdir -p /tmp/gemma-model-licenses
+python3 tools/package_model_licenses.py gemma /tmp/gemma-model-licenses
+python3 tools/package_model_licenses.py drawing /tmp/gemma-model-licenses
+gh release upload model-v1 /tmp/gemma-model-licenses/*.txt --repo JordonPark/gemma-chat
+```
+
 ## 라이선스
 
-- 앱 코드: 원하는 라이선스로 지정하세요.
+- 앱 코드: [MIT 라이선스](LICENSE).
 - 모델: [Gemma Terms of Use](https://ai.google.dev/gemma/terms)를 따릅니다. 모델 파일을 재배포하려면 약관을 확인하세요.

@@ -28,3 +28,12 @@ export const saveSettings = (s: Settings) => writeJson(settingsFile(), s);
 
 export const loadChat = (): ChatMessage[] => readJson(chatFile(), [] as ChatMessage[]);
 export const saveChat = (m: ChatMessage[]) => writeJson(chatFile(), m);
+
+const termsFile = () => new File(Paths.document, '.model-terms-v1.json');
+
+export const hasAcceptedModelTerms = () => readJson(termsFile(), false);
+export function acceptModelTerms() {
+  const file = termsFile();
+  if (!file.exists) file.create();
+  file.writeSync('true');
+}

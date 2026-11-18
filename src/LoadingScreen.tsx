@@ -5,6 +5,7 @@
  */
 import { useEffect, useRef } from 'react';
 import { Animated, Easing, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { APP_NAME } from './storeConfig';
 import { colors, isDark } from './theme';
 
 type Props = {
@@ -74,7 +75,7 @@ export function LoadingScreen({ pct, status, detail }: Props) {
             </Animated.View>
           </View>
 
-          <Text style={styles.title}>Gemma Chat</Text>
+          <Text style={styles.title}>{APP_NAME}</Text>
           <Text style={styles.subtitle}>온디바이스 AI · 인터넷 없이 대화</Text>
 
           <View style={styles.progressBlock}>

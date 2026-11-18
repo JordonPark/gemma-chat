@@ -21,6 +21,8 @@ import {
   isImageGenAvailable,
   prepareImageModel,
 } from './imageGen';
+import { APP_NAME } from './storeConfig';
+import { LegalInfo } from './LegalInfo';
 import { SetupPreview } from './SetupPreview';
 import { colors } from './theme';
 
@@ -44,12 +46,11 @@ async function fetchSizeText(): Promise<string | null> {
       fetchVisionManifest(ac.signal),
       WITH_IMAGE_MODEL ? fetchSdManifest(ac.signal) : Promise.reject(new Error('n/a')),
     ]);
-    if (chat.status !== 'fulfilled') return null;
-    const parts = [['채팅', chat.value.size]] as [string, number][];
-    if (vision.status === 'fulfilled') parts.push(['사진 인식', vision.value.size]);
+    if (chat.status !== 'fulfilled' || vision.status !== 'fulfilled' || (WITH_IMAGE_MODEL && sd.status !== 'fulfilled')) return null;
+    const parts: [string, number][] = [['채팅', chat.value.size], ['사진 인식', vision.value.size]];
     if (sd.status === 'fulfilled') parts.push(['그림', sd.value.size]);
     const total = parts.reduce((a, [, n]) => a + n, 0);
-    return parts.length === 1 ? `약 ${gb(total)}` : `약 ${gb(total)}: ${parts.map(([k, n]) => `${k} ${gb(n)}`).join(' + ')}`;
+    return `약 ${gb(total)}: ${parts.map(([k, n]) => `${k} ${gb(n)}`).join(' + ')}`;
   } catch {
     return null;
   } finally {
@@ -80,7 +81,6 @@ export function SetupScreen({ onInstalled }: { onInstalled: (m: InstalledModel, 
   const [lastError, setLastError] = useState<string | null>(null);
   const [sizeText, setSizeText] = useState(FALLBACK_SIZE);
   const abortRef = useRef<AbortController | null>(null);
-  const autoStarted = useRef(false);
   const initialInput = useRef('');
   const choosePrompt = useCallback((prompt: string) => {
     initialInput.current = prompt;
@@ -143,35 +143,22 @@ export function SetupScreen({ onInstalled }: { onInstalled: (m: InstalledModel, 
     }
   }, [onInstalled]);
 
-  /** 셀룰러면 데이터 사용 확인 후 시작 */
   const onDownloadPress = async () => {
     const net = await Network.getNetworkStateAsync().catch(() => null);
-    if (net?.type === Network.NetworkStateType.CELLULAR) {
-      Alert.alert('모바일 데이터 사용', `${sizeText}를 모바일 데이터로 받습니다. 계속할까요? (Wi-Fi 권장)`, [
+    if (net?.isConnected === false) {
+      Alert.alert('인터넷 연결 없음', 'Wi-Fi에 연결하거나 파일로 직접 설치해 주세요.');
+      return;
+    }
+    const cellular = net?.type === Network.NetworkStateType.CELLULAR;
+    Alert.alert(
+      '모델 다운로드',
+      `전체 모델 용량 ${sizeText}\n${cellular ? '모바일 데이터를 사용합니다. Wi-Fi를 권장합니다.' : '다운로드를 시작할까요?'}`,
+      [
         { text: '취소', style: 'cancel' },
-        { text: '받기', onPress: () => startDownload() },
-      ]);
-      return;
-    }
-    if (net && net.isConnected === false) {
-      Alert.alert('인터넷 연결 없음', 'Wi-Fi에 연결한 뒤 다시 시도하세요. 또는 아래 "파일로 직접 설치"를 이용하세요.');
-      return;
-    }
-    startDownload();
+        { text: '다운로드 시작', onPress: () => void startDownload() },
+      ],
+    );
   };
-
-  // 앱을 처음 열었을 때 Wi-Fi 면 자동으로 받기 시작 (받다 만 것도 자동으로 이어받기)
-  useEffect(() => {
-    if (autoStarted.current) return;
-    autoStarted.current = true;
-    (async () => {
-      const net = await Network.getNetworkStateAsync().catch(() => null);
-      const onWifi = net?.type === Network.NetworkStateType.WIFI && net.isInternetReachable !== false;
-      const onEthernet = net?.type === Network.NetworkStateType.ETHERNET;
-      if (onWifi || onEthernet) startDownload();
-      else if (hasPartialDownload()) setLastError('받다 만 모델이 있습니다. Wi-Fi에 연결하면 이어서 받습니다.');
-    })();
-  }, [startDownload]);
 
   const runImport = async (files: File[], consumeSources: boolean) => {
     setBusy('import');
@@ -212,7 +199,7 @@ export function SetupScreen({ onInstalled }: { onInstalled: (m: InstalledModel, 
       <View style={styles.mark} accessible={false}>
         <Text style={styles.glyph}>✦</Text>
       </View>
-      <Text style={styles.title}>Gemma Chat</Text>
+      <Text style={styles.title}>{APP_NAME}</Text>
       <Text style={styles.sub}>
         처음 한 번만 채팅·사진 인식{WITH_IMAGE_MODEL ? '·그림' : ''} 모델({sizeText})을 내려받습니다. 그 뒤 대화, 사진·글자 인식{WITH_IMAGE_MODEL ? ', 그림' : ''}은 인터넷 없이 이 기기 안에서만 처리됩니다.
       </Text>
@@ -268,7 +255,7 @@ export function SetupScreen({ onInstalled }: { onInstalled: (m: InstalledModel, 
           <Text style={styles.h}>Gemma 3 4B{WITH_IMAGE_MODEL ? ' + 그림' : ''} 모델 다운로드</Text>
           <Text style={styles.p}>
             GitHub 저장소(JordonPark/gemma-chat)의 Release 에서 조각을 받아 기기 안에서 이어 붙이고 SHA-256 으로
-            검증합니다. Wi-Fi 에서는 앱을 열면 자동으로 시작합니다.
+            검증합니다. Wi-Fi 연결을 권장합니다.
           </Text>
           {lastError ? <Text style={[styles.muted, { color: colors.danger }]}>{lastError}</Text> : null}
           <Pressable style={styles.btn} onPress={onDownloadPress}>
@@ -278,6 +265,7 @@ export function SetupScreen({ onInstalled }: { onInstalled: (m: InstalledModel, 
       )}
 
       <SetupPreview onChoosePrompt={choosePrompt} />
+      <LegalInfo />
 
       <Pressable style={styles.link} onPress={() => setShowManual((v) => !v)} disabled={!!busy}>
         <Text style={styles.linkText}>{showManual ? '▾' : '▸'} 인터넷 없이 파일로 직접 설치</Text>
@@ -299,8 +287,8 @@ export function SetupScreen({ onInstalled }: { onInstalled: (m: InstalledModel, 
             <View style={styles.card}>
               <Text style={styles.h}>Finder / iTunes / 파일 앱으로 넣기</Text>
               <Text style={styles.p}>
-                PC: iTunes(또는 Apple Devices) › iPhone › 파일 공유 › Gemma Chat 에 드래그. Mac: Finder › iPhone ›
-                파일 › Gemma Chat. 또는 파일 앱 › 나의 iPhone › Gemma Chat 폴더에 복사.
+                PC: iTunes(또는 Apple Devices) › iPhone › 파일 공유 › {APP_NAME}에 드래그. Mac: Finder › iPhone ›
+                파일 › {APP_NAME}. 또는 파일 앱 › 나의 iPhone › {APP_NAME} 폴더에 복사.
               </Text>
               {inbox.length > 0 ? (
                 <>

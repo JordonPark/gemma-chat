@@ -47,6 +47,10 @@ public final class ExpoSdModule: Module {
             disableSafety: false,
             reduceMemory: true
           )
+          guard p.canSafetyCheck else {
+            promise.reject("ERR_SD_SAFETY_UNAVAILABLE", "안전 검사기가 없는 그림 모델입니다. 설정에서 최신 그림 모델을 받아 주세요.")
+            return
+          }
           try p.loadResources()
           self.pipeline = p
           self.loadedPath = path
@@ -61,6 +65,10 @@ public final class ExpoSdModule: Module {
       self.queue.async {
         guard let pipeline = self.pipeline else {
           promise.reject("ERR_SD_NOT_LOADED", "이미지 모델이 로드되지 않았습니다.")
+          return
+        }
+        guard pipeline.canSafetyCheck else {
+          promise.reject("ERR_SD_SAFETY_UNAVAILABLE", "그림을 생성하려면 안전 검사기가 필요합니다.")
           return
         }
         self.cancelRequested = false

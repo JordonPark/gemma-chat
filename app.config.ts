@@ -1,9 +1,10 @@
 import type { ExpoConfig } from 'expo/config';
+import release from './src/appRelease.json';
 
 /**
  * 앱 설정.
  *
- * 네트워크는 최초 1회 모델 다운로드(GitHub Release)에만 쓴다. 채팅(추론)은 기기 안에서만 처리한다.
+ * 채팅(추론)은 기기에서 처리한다. 네트워크는 모델 다운로드, 테스트 OTA, 사용자가 보내는 신고에 사용한다.
  *
  * 완전 오프라인 빌드(INTERNET 권한 제거, 모델은 파일로만 설치)가 필요하면:
  *     OFFLINE_ONLY=1 npx expo run:android --variant release
@@ -18,10 +19,20 @@ const offlineOnly = process.env.OFFLINE_ONLY === '1';
 const easProjectId = process.env.EXPO_PROJECT_ID?.trim() || undefined;
 // expo.dev 프로젝트가 팀(조직) 계정 아래에 있으면 그 계정 이름 (예: jusuns-team)
 const easOwner = process.env.EXPO_OWNER?.trim() || undefined;
-const otaEnabled = !!easProjectId && !offlineOnly;
+const storeBuild = process.env.EXPO_PUBLIC_STORE_BUILD === '1';
+const supportUrl = process.env.EXPO_PUBLIC_SUPPORT_BASE_URL?.trim();
+
+if (storeBuild || supportUrl) {
+  const url = supportUrl ? new URL(supportUrl) : null;
+  if (!url || url.protocol !== 'https:' || url.username || url.password || url.search || url.hash || url.pathname !== '/') {
+    throw new Error('Set EXPO_PUBLIC_SUPPORT_BASE_URL to the HTTPS origin of the privacy and reporting service.');
+  }
+}
+
+const otaEnabled = !!easProjectId && !offlineOnly && !storeBuild;
 
 const config: ExpoConfig = {
-  name: 'Gemma Chat',
+  name: storeBuild ? (process.env.EXPO_PUBLIC_STORE_NAME?.trim() || 'My Buddy') : 'Gemma Chat',
   slug: 'gemma-chat',
   ...(easOwner ? { owner: easOwner } : {}),
   // 네이티브 변경(라이브러리·권한) 때마다 올린다 → OTA 업데이트가 맞는 앱에만 간다
@@ -30,7 +41,8 @@ const config: ExpoConfig = {
   // 1.3.0: 기기 OCR 모듈(modules/expo-ocr: iOS Apple Vision, Android ML Kit 한국어)
   // 1.4.0: iOS 기기 그림 생성 모듈(modules/expo-sd: Apple Core ML Stable Diffusion)
   // 1.5.0: iPhone Duo 접힘 영역 및 iOS 가로 화면 지원
-  version: '1.5.0',
+  // 1.6.0: 스토어 빌드 및 iOS 그림 안전 검사 필수화
+  version: release.version,
   orientation: 'portrait',
   icon: './assets/icon.png',
   userInterfaceStyle: 'automatic',
@@ -48,6 +60,7 @@ const config: ExpoConfig = {
   ios: {
     bundleIdentifier: 'com.jordonpark.gemmachat',
     supportsTablet: true,
+    ...(storeBuild ? { buildNumber: '1' } : {}),
     infoPlist: {
       UISupportedInterfaceOrientations: [
         'UIInterfaceOrientationPortrait',
@@ -77,7 +90,15 @@ const config: ExpoConfig = {
       monochromeImage: './assets/android-icon-monochrome.png',
     },
     predictiveBackGestureEnabled: false,
-    blockedPermissions: offlineOnly ? ['android.permission.INTERNET'] : [],
+    ...(storeBuild ? { versionCode: 16, allowBackup: false } : {}),
+    blockedPermissions: [
+      ...(offlineOnly ? ['android.permission.INTERNET'] : []),
+      ...(storeBuild ? [
+        'android.permission.SYSTEM_ALERT_WINDOW',
+        'android.permission.READ_EXTERNAL_STORAGE',
+        'android.permission.WRITE_EXTERNAL_STORAGE',
+      ] : []),
+    ],
   },
   plugins: [
     [

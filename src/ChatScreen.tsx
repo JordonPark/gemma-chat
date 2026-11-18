@@ -22,6 +22,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { activateKeepAwakeAsync, deactivateKeepAwake } from 'expo-keep-awake';
 import * as Sharing from 'expo-sharing';
 import {
+  checkGeneratedContent,
   generateIllustration,
   generateReply,
   loadModel,
@@ -49,6 +50,10 @@ import {
   type ImageModelUpdate,
 } from './imageGen';
 import { ImageViewer, type ImagePreview } from './ImageViewer';
+import { ContentSafetyError } from './contentSafety';
+import { LegalInfo } from './LegalInfo';
+import { ReportContent } from './ReportContent';
+import { APP_NAME, SUPPORT_BASE_URL } from './storeConfig';
 import { describeImageModel, imageModelSizeText, useImageModel, type ImageModelStatus } from './useImageModel';
 import { formatBytes, type InstalledModel } from './modelStore';
 import { Markdown } from './Markdown';
@@ -102,6 +107,7 @@ export function ChatScreen({ model, settings, gpuInfo, initialInput = '', onChan
   const [streaming, setStreaming] = useState<string | null>(null);
   const [stats, setStats] = useState<GenStats | null>(null);
   const [showSettings, setShowSettings] = useState(false);
+  const [reportItem, setReportItem] = useState<ChatMessage | null>(null);
   const [preview, setPreview] = useState<ImagePreview | null>(null);
   const [pendingImage, setPendingImage] = useState<string | null>(null);
   /** 첨부한 사진의 OCR 결과. undefined = 읽는 중, null = 실패/불가, string = 결과(빈 문자열이면 글자 없음) */
@@ -373,6 +379,7 @@ export function ChatScreen({ model, settings, gpuInfo, initialInput = '', onChan
       {
         id: uid(),
         role: 'assistant',
+        localOcr: true,
         content:
           text == null
             ? '글자를 읽지 못했습니다. 다시 시도해 주세요.'
@@ -431,10 +438,11 @@ export function ChatScreen({ model, settings, gpuInfo, initialInput = '', onChan
     setMessages(history);
     setInput('');
     clearPending();
-    setStreaming('');
+    setStreaming('요청을 확인하는 중…');
     setStats(null);
     await activateKeepAwakeAsync('gen');
     try {
+      await checkGeneratedContent(userMsg.content, 'user request');
       // 계산·날짜·단위·기억이 필요해 보이면 기기 도구를 먼저 고르고 실행한 뒤, 그 결과로 답한다
       if (!userMsg.image && mightNeedTool(userMsg.content)) {
         setStreaming('🔧 도구 확인 중…');
@@ -449,13 +457,17 @@ export function ChatScreen({ model, settings, gpuInfo, initialInput = '', onChan
         } catch (e) {
           console.warn('tool failed', e); // 도구가 실패하면 평소처럼 모델이 답한다
         }
-        setStreaming('');
       }
-      const { text: reply, stats: st } = await generateReply(history, settings, (t) => setStreaming(t));
+      setStreaming('답변을 준비하는 중…');
+      const { text: reply, stats: st } = await generateReply(history, settings);
       setMessages((prev) => [...prev, { id: uid(), role: 'assistant', content: reply || '(빈 응답)' }]);
       setStats(st);
     } catch (e: any) {
-      Alert.alert('생성 오류', String(e?.message ?? e));
+      if (e instanceof ContentSafetyError) {
+        setMessages((prev) => [...prev, { id: uid(), role: 'assistant', content: e.message }]);
+      } else {
+        Alert.alert('생성 오류', String(e?.message ?? e));
+      }
     } finally {
       deactivateKeepAwake('gen');
       setStreaming(null);
@@ -526,7 +538,7 @@ export function ChatScreen({ model, settings, gpuInfo, initialInput = '', onChan
               <View style={styles.identity}>
                 <BrandMark />
                 <View style={styles.flex}>
-                  <Text style={styles.title} accessibilityRole="header">Gemma Chat</Text>
+                  <Text style={styles.title} accessibilityRole="header">{APP_NAME}</Text>
                   <Text style={styles.subtitle}>오프라인 AI</Text>
                 </View>
               </View>
@@ -558,7 +570,7 @@ export function ChatScreen({ model, settings, gpuInfo, initialInput = '', onChan
               {!showSidebar ? <BrandMark /> : null}
               <View style={styles.flex}>
                 <Text style={styles.title} accessibilityRole="header" numberOfLines={1}>
-                  {showSidebar ? '대화' : 'Gemma Chat'}
+                  {showSidebar ? '대화' : APP_NAME}
                 </Text>
                 {!showSidebar ? (
                   <Text style={styles.subtitle} numberOfLines={1}>
@@ -721,6 +733,17 @@ export function ChatScreen({ model, settings, gpuInfo, initialInput = '', onChan
                       {item.tool ? <Text style={styles.toolChip}>{item.tool.chip}</Text> : null}
                     </>
                   )}
+                  {SUPPORT_BASE_URL && item.role === 'assistant' && !item.localOcr
+                    && !item.id.startsWith('__') && !item.content.startsWith('**사진 속 글자**') ? (
+                      <Pressable
+                        accessibilityRole="button"
+                        accessibilityLabel="이 AI 결과 신고"
+                        style={styles.report}
+                        onPress={() => setReportItem(item)}
+                      >
+                        <Text style={styles.reportLabel}>신고</Text>
+                      </Pressable>
+                    ) : null}
                 </View>
               )}
             />
@@ -811,6 +834,8 @@ export function ChatScreen({ model, settings, gpuInfo, initialInput = '', onChan
       <SafeAreaView style={styles.flex}>
         <FoldAwareArea>{renderWorkspace}</FoldAwareArea>
       </SafeAreaView>
+
+      {reportItem ? <ReportContent item={reportItem} onClose={() => setReportItem(null)} /> : null}
 
       {preview ? <ImageViewer media={preview} onClose={() => setPreview(null)} /> : null}
 
@@ -1082,6 +1107,7 @@ function SettingsModal({
         >
           <Text style={styles.sendText}>모델 삭제 / 교체</Text>
         </Pressable>
+        <LegalInfo />
       </ScrollView>
     </Modal>
   );
@@ -1402,6 +1428,8 @@ const styles = StyleSheet.create({
   pendingX: { width: 44, minHeight: 44, alignItems: 'center', justifyContent: 'center' },
   pendingBtn: { minHeight: 44, justifyContent: 'center', paddingHorizontal: 8, borderRadius: 8, backgroundColor: colors.accentSoft },
   pendingBtnText: { color: colors.accentText, fontSize: 13, fontWeight: '600' },
+  report: { minHeight: 44, justifyContent: 'center', alignSelf: 'flex-start', paddingRight: 10 },
+  reportLabel: { color: colors.muted, fontSize: 12 },
   pendingXText: { fontSize: 16, color: colors.muted },
   choiceRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
   choiceChip: {
