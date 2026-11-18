@@ -89,7 +89,6 @@ const supportForm = `<p>개인정보 문의나 삭제 요청을 비공개로 보
 const downloads = new Map([
   ['/licenses/gemma-terms.txt', licenses.gemmaTerms],
   ['/licenses/gemma-prohibited-use.txt', licenses.gemmaProhibitedUse],
-  ['/licenses/openrail-m.txt', licenses.creativeML],
 ]);
 
 export default {
@@ -101,8 +100,7 @@ export default {
       if (url.pathname === '/terms') return page('앱 이용약관',
         `<pre>${escapeHtml(legal.terms)}</pre><ul>
 <li><a href="/licenses/gemma-terms.txt">Gemma 라이선스</a></li>
-<li><a href="/licenses/gemma-prohibited-use.txt">Gemma 금지 사용 정책</a></li>
-<li><a href="/licenses/openrail-m.txt">CreativeML OpenRAIL-M</a></li></ul>`);
+<li><a href="/licenses/gemma-prohibited-use.txt">Gemma 금지 사용 정책</a></li></ul>`);
       if (url.pathname === '/support') return page('개인정보 문의', supportForm);
       if (downloads.has(url.pathname)) return new Response(downloads.get(url.pathname), {
         headers: { 'Content-Type': 'text/plain; charset=utf-8', 'X-Content-Type-Options': 'nosniff' },

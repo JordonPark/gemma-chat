@@ -480,7 +480,7 @@ export function ChatScreen({ model, settings, gpuInfo, initialInput = '', onChan
                       {item.tool ? <Text style={styles.toolChip}>{item.tool.chip}</Text> : null}
                     </>
                   )}
-                  {SUPPORT_BASE_URL && item.role === 'assistant' && !item.localOcr
+                  {SUPPORT_BASE_URL && item.role === 'assistant' && !item.localOcr && !item.picture && !item.svg
                     && !item.id.startsWith('__') && !item.content.startsWith('**사진 속 글자**') ? (
                       <Pressable
                         accessibilityRole="button"

@@ -11,7 +11,6 @@ const documents = [
   { name: '이용약관', text: legal.terms },
   { name: 'Gemma 라이선스', text: licenses.gemmaTerms },
   { name: 'Gemma 금지 사용 정책', text: licenses.gemmaProhibitedUse },
-  { name: 'CreativeML OpenRAIL-M', text: licenses.creativeML },
 ];
 
 export function LegalInfo() {
