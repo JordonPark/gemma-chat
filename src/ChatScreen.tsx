@@ -941,7 +941,19 @@ function SettingsModal({
         automaticallyAdjustKeyboardInsets
         keyboardShouldPersistTaps="handled"
       >
-        <Text style={styles.settingsTitle}>설정</Text>
+        <View style={styles.settingsHeader}>
+          <Text style={[styles.settingsTitle, styles.flex]}>설정</Text>
+          {/* 바꾼 값은 저장하지 않고 닫는다 (아래 '취소'와 같음) */}
+          <Pressable
+            onPress={onClose}
+            accessibilityRole="button"
+            accessibilityLabel="설정 닫기"
+            hitSlop={10}
+            style={styles.settingsClose}
+          >
+            <Text style={styles.settingsCloseText}>✕</Text>
+          </Pressable>
+        </View>
 
         <Text style={styles.label}>시스템 프롬프트</Text>
         <TextInput
@@ -1373,6 +1385,17 @@ const styles = StyleSheet.create({
   settingsBackground: { backgroundColor: colors.bg },
   settings: { padding: 24, gap: 10, width: '100%', maxWidth: 600, alignSelf: 'center' },
   settingsTitle: { fontSize: 28, fontWeight: '800', color: colors.text, marginBottom: 8 },
+  settingsHeader: { flexDirection: 'row', alignItems: 'center', gap: 12 },
+  settingsClose: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: colors.border,
+    marginBottom: 8,
+  },
+  settingsCloseText: { fontSize: 18, fontWeight: '700', color: colors.text },
   label: { fontSize: 14, fontWeight: '600', color: colors.text, marginTop: 8 },
   hint: { fontSize: 12, color: colors.muted },
   field: {
