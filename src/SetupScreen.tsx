@@ -126,7 +126,10 @@ export function SetupScreen({ onInstalled }: { onInstalled: (m: InstalledModel) 
 
   return (
     <ScrollView contentContainerStyle={styles.wrap}>
-      <Text style={styles.title}>Gemma 3 4B 온디바이스 챗봇</Text>
+      <View style={styles.mark} accessible={false}>
+        <Text style={styles.glyph}>✦</Text>
+      </View>
+      <Text style={styles.title}>Gemma Chat</Text>
       <Text style={styles.sub}>
         처음 한 번만 모델(약 3.2GB)을 내려받습니다. 그 뒤 대화는 인터넷 없이 이 기기 안에서만 처리됩니다.
       </Text>
@@ -154,7 +157,7 @@ export function SetupScreen({ onInstalled }: { onInstalled: (m: InstalledModel) 
         </View>
       ) : (
         <View style={styles.card}>
-          <Text style={styles.h}>모델 다운로드</Text>
+          <Text style={styles.h}>Gemma 3 4B 모델 다운로드</Text>
           <Text style={styles.p}>
             GitHub 저장소(JordonPark/gemma-chat)의 Release 에서 조각을 받아 기기 안에서 이어 붙이고 SHA-256 으로
             검증합니다. Wi-Fi 에서는 앱을 열면 자동으로 시작합니다.
@@ -219,19 +222,21 @@ export function SetupScreen({ onInstalled }: { onInstalled: (m: InstalledModel) 
 }
 
 const styles = StyleSheet.create({
-  wrap: { padding: 20, gap: 14 },
-  title: { fontSize: 22, fontWeight: '700', color: colors.text },
-  sub: { fontSize: 14, color: colors.muted },
-  card: { backgroundColor: colors.card, borderRadius: 12, padding: 14, gap: 8 },
-  h: { fontSize: 15, fontWeight: '600', color: colors.text },
+  wrap: { paddingHorizontal: 20, paddingVertical: 32, gap: 16, width: '100%', maxWidth: 600, alignSelf: 'center' },
+  mark: { width: 62, height: 62, borderRadius: 21, backgroundColor: colors.accentSoft, alignItems: 'center', justifyContent: 'center' },
+  glyph: { fontSize: 35, color: colors.accentText },
+  title: { fontSize: 34, fontWeight: '800', letterSpacing: -0.8, color: colors.text },
+  sub: { fontSize: 15, lineHeight: 23, color: colors.muted, marginBottom: 8 },
+  card: { backgroundColor: colors.card, borderRadius: 22, borderWidth: 1, borderColor: colors.border, padding: 18, gap: 12 },
+  h: { fontSize: 17, fontWeight: '700', color: colors.text },
   p: { fontSize: 14, lineHeight: 20, color: colors.text },
   muted: { fontSize: 13, color: colors.muted },
   file: { fontSize: 13, color: colors.text, fontFamily: Platform.select({ ios: 'Menlo', default: 'monospace' }) },
-  btn: { backgroundColor: colors.accent, borderRadius: 10, paddingVertical: 14, alignItems: 'center' },
+  btn: { backgroundColor: colors.accent, borderRadius: 14, paddingVertical: 14, alignItems: 'center' },
   btnOff: { opacity: 0.5 },
   btnText: { color: '#fff', fontSize: 15, fontWeight: '600' },
   link: { alignSelf: 'flex-start', paddingVertical: 4 },
-  linkText: { color: colors.accent, fontSize: 14 },
+  linkText: { color: colors.accentText, fontSize: 14 },
   bar: { height: 6, borderRadius: 3, backgroundColor: colors.border, overflow: 'hidden' },
   barFill: { height: 6, backgroundColor: colors.accent },
 });

@@ -224,7 +224,7 @@ const styles = StyleSheet.create({
   bold: { fontWeight: '700' },
   italic: { fontStyle: 'italic' },
   strike: { textDecorationLine: 'line-through' },
-  link: { color: colors.accent },
+  link: { color: colors.accentText, textDecorationLine: 'underline' },
   inlineCode: { fontFamily: mono, fontSize: 13.5, backgroundColor: codeBg },
   list: { gap: 4 },
   listItem: { flexDirection: 'row' },

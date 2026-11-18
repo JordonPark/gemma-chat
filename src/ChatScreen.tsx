@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, type ComponentRef } from 'react';
 import {
   Alert,
   FlatList,
@@ -58,6 +58,7 @@ export function ChatScreen({ model, settings, gpuInfo, onChangeSettings, onRemov
   const ocrJob = useRef<Promise<string | null> | null>(null);
   /** 일러스트를 그리는 중이면 { 설명, 미리보기 SVG, 받은 글자 수 } */
   const [drawing, setDrawing] = useState<{ desc: string; svg: string | null; chars: number } | null>(null);
+  const inputRef = useRef<ComponentRef<typeof TextInput>>(null);
   const listRef = useRef<FlatList<ChatMessage>>(null);
   const vision = useVision(settings);
 
@@ -220,10 +221,13 @@ export function ChatScreen({ model, settings, gpuInfo, onChangeSettings, onRemov
       behavior={Platform.OS === 'ios' ? 'padding' : undefined}
     >
       <View style={styles.header}>
+        <View style={styles.brandMark} accessible={false}>
+          <Text style={styles.brandGlyph}>✦</Text>
+        </View>
         <View style={styles.flex}>
-          <Text style={styles.title}>Gemma 3 4B</Text>
+          <Text style={styles.title}>Gemma Chat</Text>
           <Text style={styles.subtitle} numberOfLines={1}>
-            오프라인 · {gpuInfo}
+            Gemma 3 4B · {gpuInfo}
             {stats ? ` · ${stats.tokPerSec.toFixed(1)} tok/s` : ''}
           </Text>
         </View>
@@ -241,14 +245,40 @@ export function ChatScreen({ model, settings, gpuInfo, onChangeSettings, onRemov
       <FlatList
         ref={listRef}
         style={styles.flex}
-        contentContainerStyle={styles.list}
+        contentContainerStyle={[styles.list, data.length === 0 && styles.emptyList]}
+        keyboardShouldPersistTaps="handled"
         data={data}
         keyExtractor={(m) => m.id}
         onContentSizeChange={() => listRef.current?.scrollToEnd({ animated: false })}
         ListEmptyComponent={
-          <Text style={styles.empty}>
-            무엇이든 물어보세요.{'\n'}📷 사진에 대해 묻거나, 🎨 로 일러스트를 그려 보세요.{'\n'}모든 처리는 이 기기 안에서만 이루어집니다.
-          </Text>
+          <View style={styles.welcome}>
+            <View style={styles.welcomeMark} accessible={false}>
+              <Text style={styles.welcomeGlyph}>✦</Text>
+            </View>
+            <Text style={styles.welcomeTitle}>무엇을 도와드릴까요?</Text>
+            <Text style={styles.welcomeDescription}>
+              인터넷 없이 대화해 보세요. 모든 대화는 이 기기 안에서 처리됩니다.
+            </Text>
+            <View style={styles.shortcuts}>
+              <Pressable accessibilityRole="button" style={styles.shortcut} onPress={attach}>
+                <Text style={styles.shortcutIcon}>📷</Text>
+                <Text style={styles.shortcutTitle}>사진으로 질문</Text>
+                <Text style={styles.shortcutDescription}>사진을 첨부해 물어보세요.</Text>
+              </Pressable>
+              <Pressable
+                accessibilityRole="button"
+                style={styles.shortcut}
+                onPress={() => {
+                  if (!input.trim()) setInput('별빛이 비치는 바닷가를 그려줘');
+                  inputRef.current?.focus();
+                }}
+              >
+                <Text style={styles.shortcutIcon}>🎨</Text>
+                <Text style={styles.shortcutTitle}>일러스트 그리기</Text>
+                <Text style={styles.shortcutDescription}>그림을 설명하고 🎨를 누르세요.</Text>
+              </Pressable>
+            </View>
+          </View>
         }
         renderItem={({ item }) => (
           <View style={[styles.bubble, item.role === 'user' ? styles.userBubble : styles.botBubble]}>
@@ -289,37 +319,53 @@ export function ChatScreen({ model, settings, gpuInfo, onChangeSettings, onRemov
               <Text style={styles.pendingBtnText}>글자 읽기</Text>
             </Pressable>
           ) : null}
-          <Pressable onPress={clearPending} style={styles.pendingX}>
+          <Pressable onPress={clearPending} style={styles.pendingX} accessibilityRole="button" accessibilityLabel="첨부 사진 제거">
             <Text style={styles.pendingXText}>✕</Text>
           </Pressable>
         </View>
       ) : null}
 
-      <View style={[styles.inputRow, { paddingBottom: Math.max(insets.bottom, 8) }]}>
-        <Pressable style={[styles.attach, busy && styles.off]} onPress={attach} disabled={busy}>
-          <Text style={styles.attachText}>📷</Text>
-        </Pressable>
-        <Pressable style={[styles.attach, busy && styles.off]} onPress={() => draw(input)} disabled={busy}>
-          <Text style={styles.attachText}>🎨</Text>
-        </Pressable>
-        <TextInput
-          style={styles.input}
-          value={input}
-          onChangeText={setInput}
-          placeholder="메시지 입력"
-          placeholderTextColor={colors.muted}
-          multiline
-          editable={!busy}
-        />
-        {busy ? (
-          <Pressable style={[styles.send, { backgroundColor: colors.danger }]} onPress={() => stopGeneration()}>
-            <Text style={styles.sendText}>중지</Text>
+      <View style={[styles.composer, { paddingBottom: Math.max(insets.bottom, 12) }]}>
+        <View style={styles.inputRow}>
+          <Pressable
+            style={[styles.attach, busy && styles.off]}
+            onPress={attach}
+            disabled={busy}
+            accessibilityRole="button"
+            accessibilityLabel="사진 첨부"
+          >
+            <Text style={styles.attachText}>📷</Text>
           </Pressable>
-        ) : (
-          <Pressable style={[styles.send, !canSend && styles.off]} onPress={send} disabled={!canSend}>
-            <Text style={styles.sendText}>전송</Text>
+          <Pressable
+            style={[styles.attach, busy && styles.off]}
+            onPress={() => draw(input)}
+            disabled={busy}
+            accessibilityRole="button"
+            accessibilityLabel="일러스트 그리기"
+          >
+            <Text style={styles.attachText}>🎨</Text>
           </Pressable>
-        )}
+          <TextInput
+            ref={inputRef}
+            accessibilityLabel="메시지 입력"
+            style={styles.input}
+            value={input}
+            onChangeText={setInput}
+            placeholder="메시지 입력"
+            placeholderTextColor={colors.muted}
+            multiline
+            editable={!busy}
+          />
+          {busy ? (
+            <Pressable style={[styles.send, { backgroundColor: colors.danger }]} onPress={() => stopGeneration()}>
+              <Text style={styles.sendText}>중지</Text>
+            </Pressable>
+          ) : (
+            <Pressable style={[styles.send, !canSend && styles.off]} onPress={send} disabled={!canSend}>
+              <Text style={styles.sendText}>전송</Text>
+            </Pressable>
+          )}
+        </View>
       </View>
 
       <SettingsModal
@@ -371,7 +417,7 @@ function SettingsModal({
   return (
     <Modal visible={visible} animationType="slide" onRequestClose={onClose} presentationStyle="pageSheet">
       <ScrollView style={{ backgroundColor: colors.bg }} contentContainerStyle={styles.settings}>
-        <Text style={styles.title}>설정</Text>
+        <Text style={styles.settingsTitle}>설정</Text>
 
         <Text style={styles.label}>시스템 프롬프트</Text>
         <TextInput
@@ -487,70 +533,78 @@ const styles = StyleSheet.create({
   header: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: 14,
+    paddingHorizontal: 16,
     paddingVertical: 10,
+    backgroundColor: colors.card,
     borderBottomWidth: StyleSheet.hairlineWidth,
     borderBottomColor: colors.border,
-    gap: 6,
+    gap: 8,
   },
+  brandMark: { width: 38, height: 38, borderRadius: 13, backgroundColor: colors.accentSoft, alignItems: 'center', justifyContent: 'center' },
+  brandGlyph: { fontSize: 23, color: colors.accentText },
   title: { fontSize: 18, fontWeight: '700', color: colors.text },
   subtitle: { fontSize: 12, color: colors.muted, marginTop: 2 },
-  hBtn: { paddingHorizontal: 10, paddingVertical: 6, borderRadius: 8, backgroundColor: colors.card },
-  hBtnText: { color: colors.accent, fontSize: 14, fontWeight: '600' },
-  list: { padding: 12, gap: 10, flexGrow: 1 },
-  empty: { color: colors.muted, textAlign: 'center', marginTop: 80, lineHeight: 22 },
-  bubble: { maxWidth: '88%', borderRadius: 14, paddingHorizontal: 12, paddingVertical: 9 },
-  userBubble: { alignSelf: 'flex-end', backgroundColor: colors.userBubble },
+  hBtn: { minHeight: 44, justifyContent: 'center', paddingHorizontal: 10, borderRadius: 13, backgroundColor: colors.accentSoft },
+  hBtnText: { color: colors.accentText, fontSize: 14, fontWeight: '600' },
+  list: { padding: 16, gap: 14, flexGrow: 1, width: '100%', maxWidth: 760, alignSelf: 'center' },
+  emptyList: { justifyContent: 'center' },
+  welcome: { alignItems: 'center', alignSelf: 'center', width: '100%', maxWidth: 440, paddingVertical: 20 },
+  welcomeMark: { width: 76, height: 76, borderRadius: 26, backgroundColor: colors.accentSoft, alignItems: 'center', justifyContent: 'center', marginBottom: 20 },
+  welcomeGlyph: { fontSize: 44, color: colors.accentText },
+  welcomeTitle: { color: colors.text, textAlign: 'center', fontSize: 29, fontWeight: '800', letterSpacing: -0.8 },
+  welcomeDescription: { color: colors.muted, textAlign: 'center', fontSize: 15, lineHeight: 23, maxWidth: 270, marginTop: 9 },
+  shortcuts: { flexDirection: 'row', gap: 10, marginTop: 24, width: '100%' },
+  shortcut: { flex: 1, padding: 13, gap: 5, borderRadius: 18, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.card },
+  shortcutIcon: { fontSize: 21, marginBottom: 3 },
+  shortcutTitle: { fontWeight: '700', fontSize: 14, color: colors.text },
+  shortcutDescription: { fontSize: 12, lineHeight: 18, color: colors.muted },
+  bubble: { maxWidth: '88%', borderRadius: 20, paddingHorizontal: 14, paddingVertical: 12 },
+  userBubble: { alignSelf: 'flex-end', borderBottomRightRadius: 6, backgroundColor: colors.userBubble },
   botBubble: {
     alignSelf: 'flex-start',
+    borderBottomLeftRadius: 6,
     backgroundColor: colors.botBubble,
     borderWidth: StyleSheet.hairlineWidth,
     borderColor: colors.border,
   },
   msg: { fontSize: 15, lineHeight: 22, color: colors.text },
   userText: { color: '#fff' },
+  composer: { paddingHorizontal: 12, paddingTop: 6, width: '100%', maxWidth: 760, alignSelf: 'center' },
   inputRow: {
     flexDirection: 'row',
     alignItems: 'flex-end',
-    gap: 8,
-    paddingHorizontal: 10,
-    paddingTop: 8,
-    borderTopWidth: StyleSheet.hairlineWidth,
-    borderTopColor: colors.border,
-    backgroundColor: colors.bg,
+    gap: 4,
+    padding: 5,
+    borderRadius: 22,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.card,
   },
   input: {
     flex: 1,
     maxHeight: 140,
-    minHeight: 42,
-    borderRadius: 12,
-    paddingHorizontal: 12,
-    paddingTop: 10,
-    paddingBottom: 10,
+    minHeight: 44,
+    paddingHorizontal: 6,
+    paddingVertical: 10,
     fontSize: 15,
     color: colors.text,
-    backgroundColor: colors.card,
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: colors.border,
   },
   send: {
     backgroundColor: colors.accent,
     borderRadius: 12,
     paddingHorizontal: 16,
-    height: 42,
+    minHeight: 44,
     alignItems: 'center',
     justifyContent: 'center',
   },
   sendText: { color: '#fff', fontWeight: '600', fontSize: 15 },
   attach: {
-    width: 42,
-    height: 42,
+    width: 44,
+    minHeight: 44,
     borderRadius: 12,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: colors.card,
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: colors.border,
+    backgroundColor: colors.accentSoft,
   },
   attachText: { fontSize: 20 },
   msgImage: { width: 220, height: 220, borderRadius: 10, marginBottom: 6 },
@@ -568,7 +622,7 @@ const styles = StyleSheet.create({
   pendingText: { flex: 1, fontSize: 13, color: colors.muted },
   pendingX: { padding: 8 },
   pendingBtn: { paddingHorizontal: 10, paddingVertical: 6, borderRadius: 8, backgroundColor: colors.card },
-  pendingBtnText: { color: colors.accent, fontSize: 13, fontWeight: '600' },
+  pendingBtnText: { color: colors.accentText, fontSize: 13, fontWeight: '600' },
   pendingXText: { fontSize: 16, color: colors.muted },
   dlBar: {
     flexDirection: 'row',
@@ -584,7 +638,8 @@ const styles = StyleSheet.create({
   dlTrack: { height: 4, borderRadius: 2, backgroundColor: colors.border, overflow: 'hidden' },
   dlFill: { height: 4, backgroundColor: colors.accent },
   off: { opacity: 0.4 },
-  settings: { padding: 20, gap: 8 },
+  settings: { padding: 24, gap: 10 },
+  settingsTitle: { fontSize: 28, fontWeight: '800', color: colors.text, marginBottom: 8 },
   label: { fontSize: 14, fontWeight: '600', color: colors.text, marginTop: 8 },
   hint: { fontSize: 12, color: colors.muted },
   field: {
