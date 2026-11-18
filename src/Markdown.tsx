@@ -227,10 +227,12 @@ const styles = StyleSheet.create({
   link: { color: colors.accentText, textDecorationLine: 'underline' },
   inlineCode: { fontFamily: mono, fontSize: 13.5, backgroundColor: codeBg },
   list: { gap: 4 },
-  listItem: { flexDirection: 'row' },
+  listItem: { flexDirection: 'row', alignItems: 'flex-start' },
   ulMarker: { width: 16, color: colors.muted },
   olMarker: { minWidth: 22, color: colors.muted, fontVariant: ['tabular-nums'] },
-  listText: { flex: 1 },
+  // flex: 1 은 말풍선처럼 너비가 내용으로 정해지는 곳에서 줄바꿈 높이를 잘못 재 아래 글이 말풍선 밖으로 밀려난다.
+  // 기본 너비에서 줄어들게(flexShrink) 해야 실제 줄바꿈된 높이로 잰다.
+  listText: { flexShrink: 1 },
   quote: { borderLeftWidth: 3, borderLeftColor: colors.border, paddingLeft: 10 },
   quoteText: { color: colors.muted },
   codeBlock: { backgroundColor: codeBg, borderRadius: 8, padding: 10 },
