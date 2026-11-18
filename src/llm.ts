@@ -11,7 +11,16 @@ export type Role = 'user' | 'assistant';
  * svg: Gemma 가 그린 일러스트 (어시스턴트 메시지에만). 대화 기록으로 모델에 넘길 때는 content 만 쓴다.
  * ocr: 사진에서 기기 OCR 로 읽은 글자 (사용자 메시지에만)
  */
-export type ChatMessage = { id: string; role: Role; content: string; image?: string; svg?: string; ocr?: string };
+export type ChatMessage = {
+  id: string;
+  role: Role;
+  content: string;
+  image?: string;
+  svg?: string;
+  ocr?: string;
+  /** 기기에서 생성한 그림(PNG) file:// URI (어시스턴트 메시지에만) */
+  picture?: string;
+};
 
 const OCR_MAX_CHARS = 2000;
 /** OCR 결과를 질문에 붙인다. Gemma 가 직접 읽는 것보다 정확하므로 글자 관련 답은 이걸 우선 쓰게 한다 */
@@ -277,4 +286,49 @@ export async function generateIllustration(
       interrupted: !!res.interrupted,
     },
   };
+}
+
+// ───────────────────────── 그림 생성용 프롬프트 ─────────────────────────
+
+/**
+ * 한국어 요청을 Stable Diffusion 용 영어 프롬프트(주제·자세·배경)로 바꾼다. 그림체 단어는 앱이 붙인다.
+ */
+export async function makeImagePrompt(description: string): Promise<string> {
+  const c = ctx;
+  if (!c) throw new Error('모델이 로드되지 않았습니다.');
+  await c.clearCache(false);
+  const res = await c.completion({
+    messages: [
+      {
+        role: 'user',
+        content: [
+          'Rewrite this picture request as a Stable Diffusion prompt in English.',
+          `Request (may be in Korean): ${description.trim()}`,
+          '',
+          'Describe only what to draw: the main subject with 2-4 key visual details (colors, pose, expression, clothing), what it is doing, and the setting/background.',
+          'Comma-separated phrases, 15 to 40 words. Do NOT mention art style, medium, quality or camera words (they are added automatically).',
+          'If the request asks for a person, describe a fictional character. Keep it wholesome.',
+        ].join('\n'),
+      },
+    ],
+    jinja: true,
+    n_predict: 160,
+    temperature: 0.4,
+    top_k: 40,
+    top_p: 0.9,
+    stop: STOP_WORDS,
+    response_format: {
+      type: 'json_schema',
+      json_schema: { strict: true, schema: { type: 'object', properties: { prompt: { type: 'string' } }, required: ['prompt'] } },
+    },
+  });
+  await c.clearCache(false);
+  const raw = stripStop(res.content || res.text || '');
+  try {
+    const p = String(JSON.parse(raw.slice(raw.indexOf('{'), raw.lastIndexOf('}') + 1)).prompt ?? '').trim();
+    if (p) return p.replace(/\s+/g, ' ').slice(0, 400);
+  } catch {
+    // 아래 기본값
+  }
+  return description.trim();
 }

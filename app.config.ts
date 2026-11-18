@@ -28,7 +28,8 @@ const config: ExpoConfig = {
   // 1.1.0: 카메라·사진(expo-image-picker, expo-image-manipulator) 추가
   // 1.2.0: SVG 일러스트(react-native-svg), PNG 저장·공유(react-native-view-shot, expo-sharing)
   // 1.3.0: 기기 OCR 모듈(modules/expo-ocr: iOS Apple Vision, Android ML Kit 한국어)
-  version: '1.3.0',
+  // 1.4.0: iOS 기기 그림 생성 모듈(modules/expo-sd: Apple Core ML Stable Diffusion)
+  version: '1.4.0',
   orientation: 'portrait',
   icon: './assets/icon.png',
   userInterfaceStyle: 'automatic',

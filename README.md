@@ -118,15 +118,24 @@ Gemma 3 4B는 이미지를 이해하는 모델입니다. 비전 프로젝터(`mm
 - 이미지 인식 파일(0.85GB)이 없거나 꺼져 있어도, 사진의 **글자**로는 답할 수 있습니다.
 - 코드는 `modules/expo-ocr`에 있는 로컬 Expo 모듈입니다(Swift와 Kotlin, 각 100줄 안팎).
 
-## 2-2. 일러스트 그리기
+## 2-2. 그림 그리기
 
 입력창에 그릴 내용을 적고 **🎨**를 누르거나, "…그려줘", "…일러스트 만들어줘"라고 보냅니다.
 
-- **나눠서 처리:** Gemma는 **부품 목록**(머리, 귀, 눈, 눈동자, 코, 입, 볼, 몸통, 꼬리, 배경 사물 등)만 정합니다. 부품마다 역할, 도형, 위치, 크기, 색을 JSON 스키마로 받고, 부품 수는 12~45개로 강제합니다. 그래서 몇 개만 그리다 멈추는 일이 없습니다.
-- **그림체는 앱이:** 앱(`src/scene.ts`)이 부품을 일정한 그림체로 그립니다. 진한 외곽선, 겹치는 순서, 눈 하이라이트, 볼터치를 자동으로 넣습니다.
-- **미리보기와 중지:** 그리는 동안 완성된 부품부터 미리보기에 나타납니다. **중지**를 누르면 그때까지의 부품으로 완성합니다.
-- **저장·공유:** **저장 · 공유**를 누르면 1024px PNG로 공유하거나 사진 앱에 저장합니다.
-- **한계:** 원·타원·사각형·삼각형·선으로 만드는 귀여운 플랫 일러스트입니다. 부품 배치는 모델이 정하므로 가끔 어긋날 수 있습니다.
+### iPhone: 수채화 동화풍 그림 (Stable Diffusion, 기기 안에서 생성)
+- **모델:** Apple이 iPhone 신경망 칩용으로 변환한 **Stable Diffusion 1.5**(Core ML, 6-bit palettized, `split_einsum_v2`)를 씁니다. 처음 그릴 때 약 1.6GB를 한 번 받고, 압축을 풀 때 약 3.3GB의 여유 공간이 필요합니다. Release에는 *Actions › Publish image model*이 올립니다.
+- **흐름:**
+  1. Gemma가 한국어 요청을 영어 장면 묘사로 바꿉니다.
+  2. 앱이 수채화 동화책 스타일 문구와 제외 문구를 붙입니다.
+  3. 채팅 모델을 잠시 내리고 25단계로 그립니다(512×512).
+  4. 그림이 끝나면 채팅 모델을 다시 불러옵니다.
+- **시간:** 처음 한 번은 Neural Engine 준비에 1~3분이 걸립니다. 그 뒤로는 한 장에 수십 초 정도 걸릴 것으로 예상합니다.
+- **안전 검사:** Apple 파이프라인의 안전 검사(Safety Checker)를 켜 두었습니다.
+- **소스:** `modules/expo-sd`에 Apple [ml-stable-diffusion](https://github.com/apple/ml-stable-diffusion)(MIT)의 Swift 소스를 포함했습니다. SD3·T5 파일은 뺐습니다(`ios/StableDiffusion/VENDORED.md`).
+- **모델 라이선스:** CreativeML OpenRAIL-M. 사용 제한 조항을 따라야 합니다.
+
+### Android: 도형 일러스트
+Gemma가 **부품 목록**(머리, 귀, 눈, 몸통 등)을 JSON 스키마로 정하고, 앱(`src/scene.ts`)이 외곽선 있는 플랫 일러스트로 그립니다.
 
 ## 3. 앱 빌드
 
@@ -225,7 +234,10 @@ src/Markdown.tsx        답변 Markdown 렌더링 (의존성 없음)
 src/UpdateBanner.tsx    OTA 업데이트 배너·확인
 src/vision.ts           mmproj 다운로드, 카메라·앨범 사진 선택과 축소
 src/useVision.ts        이미지 인식 상태(받기·켜기·끄기)
-src/scene.ts            일러스트: 부품 JSON 스키마·프롬프트, 부품 → SVG 그리기
+src/scene.ts            도형 일러스트(Android): 부품 JSON 스키마·프롬프트, 부품 → SVG
+src/imageGen.ts         그림 모델(iOS) 다운로드·압축 해제, 수채화 동화풍 프롬프트, 생성
+src/useImageModel.ts    그림 모델 설치 상태
+modules/expo-sd/        iOS Core ML Stable Diffusion 네이티브 모듈
 src/SvgCard.tsx         일러스트 표시, PNG 저장·공유
 modules/expo-ocr/       기기 OCR 네이티브 모듈 (iOS Vision / Android ML Kit 한국어)
 tools/pack_model.sh     PC: HF git 저장소에서 받아 분할
