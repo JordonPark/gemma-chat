@@ -876,9 +876,19 @@ function SettingsModal({
       supportedOrientations={['portrait', 'landscape']}
     >
       <SafeAreaView style={[styles.flex, styles.settingsBackground]} edges={['top', 'left', 'right']}>
+      {/* iPhone Duo 처럼 화면 한쪽을 카메라·상태 줄이 가리는 기기에서는 그 부분을 비워 ✕ 와 내용이 가려지지 않게 한다 */}
+      <FoldAwareArea>{(size, division) => {
+        const fold = getFoldInsets(size, division);
+        return (
+      <View style={[styles.flex, {
+        marginLeft: fold.left ?? 0,
+        marginRight: fold.right ?? 0,
+        marginTop: fold.top ?? 0,
+        marginBottom: fold.bottom ?? 0,
+      }]}>
         {/* 제목과 ✕ 는 위에 고정한다 (아래로 스크롤해도 항상 보이게). ✕ 는 바꾼 값을 저장하지 않고 닫는다 */}
         <View style={styles.settingsBar}>
-          <Text style={[styles.settingsTitle, styles.flex]}>설정</Text>
+          {/* ✕ 는 왼쪽에 둔다: 오른쪽 끝은 기기에 따라 카메라·상태 줄에 가려질 수 있다 */}
           <Pressable
             onPress={onClose}
             accessibilityRole="button"
@@ -888,6 +898,7 @@ function SettingsModal({
           >
             <Text style={styles.settingsCloseText}>✕</Text>
           </Pressable>
+          <Text style={[styles.settingsTitle, styles.flex]}>설정</Text>
         </View>
       <ScrollView
         style={styles.settingsBackground}
@@ -997,6 +1008,9 @@ function SettingsModal({
         <View style={{ height: 16 }} />
         <LegalInfo />
       </ScrollView>
+      </View>
+        );
+      }}</FoldAwareArea>
       </SafeAreaView>
     </Modal>
   );
