@@ -35,6 +35,12 @@ GitHub Actions "Publish model"                        앱 첫 실행 (Wi-Fi)
 
 앱은 `https://github.com/JordonPark/gemma-chat/releases/download/model-v1/manifest.json`을 먼저 읽고 조각을 받습니다(`src/modelDownload.ts`의 `MODEL_RELEASE_URL`). 저장소가 공개이면 Gemma 모델을 공개 재배포하게 되며, Gemma 이용 약관에 따라 `NOTICE.txt`(약관 고지)를 함께 올립니다.
 
+### 작은 모델 (기본 배포본, 2.36GB)
+
+Release `model-v1`의 `manifest.json`은 **작은 모델**(`gemma-3-4b-it-q4_0-small.gguf`)을 가리킵니다. 원본 QAT 모델의 단어 사전(토큰 임베딩, 1.34GB)만 F16에서 Q6_K로 다시 압축한 것으로, 크기가 **3.16GB → 2.36GB**로 줄었습니다. 나머지 443개 텐서는 원본과 바이트까지 같습니다(*Actions › Publish small model*, `tools/shrink_embeddings.py`로 확인). 원본을 가리키던 목록은 `manifest-f16embd.json`으로 보관합니다.
+
+예전 모델을 쓰고 있다면 앱 **설정 › 모델 › 더 작은 모델로 교체**로 바꿀 수 있습니다. 새 모델을 다 받은 뒤 예전 모델을 지우고, 받는 동안에도 대화할 수 있습니다.
+
 ## 1-1. 인터넷 없이 설치할 때: 모델 준비 (PC에서 한 번)
 
 필요한 것: `git`, `git-lfs`, `python3`, 그리고 Hugging Face에서 Gemma 라이선스에 동의한 계정의 read 토큰.
@@ -230,6 +236,8 @@ src/llm.ts              llama.rn 래퍼: 로드, Gemma 채팅 템플릿(jinja), 
 src/ChatScreen.tsx      채팅 UI, 생성 중지, 설정(시스템 프롬프트, n_ctx, 토큰 수, temperature, GPU)
 src/SetupScreen.tsx     모델 가져오기 UI와 진행률
 src/storage.ts          설정과 대화를 기기 안 JSON 파일로 저장
+src/storageInfo.ts      저장 공간 내역·임시 파일 정리
+tools/shrink_embeddings.py  GGUF 토큰 임베딩 재압축·검사 도구 (gguf-py)
 src/Markdown.tsx        답변 Markdown 렌더링 (의존성 없음)
 src/UpdateBanner.tsx    OTA 업데이트 배너·확인
 src/vision.ts           mmproj 다운로드, 카메라·앨범 사진 선택과 축소

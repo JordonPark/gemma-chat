@@ -45,6 +45,8 @@ import { describeVision, useVision, type VisionStatus } from './useVision';
 import { deleteImages, pickImage, type ImageSource } from './vision';
 import { isOcrAvailable, recognizeText } from '../modules/expo-ocr';
 import { clearTempFiles, storageBreakdown } from './storageInfo';
+import { DownloadCancelled, checkSmallerModel, downloadModel, type ModelUpgrade } from './modelDownload';
+import type { ImportProgress } from './modelStore';
 
 const uid = () => `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
 
@@ -54,9 +56,11 @@ type Props = {
   gpuInfo: string;
   onChangeSettings: (s: Settings) => void;
   onRemoveModel: () => void;
+  /** 더 작은 모델로 교체가 끝나면 새 모델을 불러온다 */
+  onModelReplaced: (m: InstalledModel) => void;
 };
 
-export function ChatScreen({ model, settings, gpuInfo, onChangeSettings, onRemoveModel }: Props) {
+export function ChatScreen({ model, settings, gpuInfo, onChangeSettings, onRemoveModel, onModelReplaced }: Props) {
   const { fontScale } = useWindowDimensions();
   const [messages, setMessages] = useState<ChatMessage[]>(() => loadChat());
   const [input, setInput] = useState('');
@@ -81,6 +85,49 @@ export function ChatScreen({ model, settings, gpuInfo, onChangeSettings, onRemov
   const followLatest = useRef(true);
   const vision = useVision(settings);
   const imageModel = useImageModel();
+
+  // ── 더 작은 채팅 모델로 교체 (설정을 열 때 한 번 확인) ──
+  const [upgrade, setUpgrade] = useState<ModelUpgrade | null>(null);
+  const [upgradeDl, setUpgradeDl] = useState<{ progress: ImportProgress | null } | null>(null);
+  const upgradeChecked = useRef(false);
+  const upgradeAbort = useRef<AbortController | null>(null);
+  useEffect(() => {
+    if (!showSettings || upgradeChecked.current) return;
+    upgradeChecked.current = true;
+    checkSmallerModel(model).then(setUpgrade);
+  }, [showSettings, model]);
+  const startUpgrade = () => {
+    if (!upgrade || upgradeDl) return;
+    Alert.alert(
+      '더 작은 모델로 교체',
+      `같은 Gemma 3 4B 에서 단어 사전 부분만 더 압축한 모델입니다 (답변 품질은 거의 같음).\n\n` +
+        `${formatBytes(upgrade.size)} 를 받고, 끝나면 지금 모델을 지워 ${formatBytes(upgrade.saving)} 를 아낍니다. ` +
+        `받는 동안 대화는 계속할 수 있습니다. Wi-Fi 권장.`,
+      [
+        { text: '취소', style: 'cancel' },
+        {
+          text: '교체',
+          onPress: async () => {
+            const ac = new AbortController();
+            upgradeAbort.current = ac;
+            setUpgradeDl({ progress: null });
+            await activateKeepAwakeAsync('model-upgrade');
+            try {
+              const m = await downloadModel((p) => setUpgradeDl({ progress: p }), ac.signal);
+              setUpgrade(null);
+              onModelReplaced(m);
+            } catch (e: any) {
+              if (!(e instanceof DownloadCancelled)) Alert.alert('모델 교체 실패', `지금 모델은 그대로입니다.\n${e?.message ?? e}`);
+            } finally {
+              deactivateKeepAwake('model-upgrade');
+              upgradeAbort.current = null;
+              setUpgradeDl(null);
+            }
+          },
+        },
+      ],
+    );
+  };
   const usePictureModel = imageModel.status.kind !== 'unsupported';
 
   useEffect(() => saveChat(messages), [messages]);
@@ -391,6 +438,22 @@ export function ChatScreen({ model, settings, gpuInfo, onChangeSettings, onRemov
 
             <UpdateBanner busy={busy} />
             <VisionDownloadBar status={vision.status} onCancel={vision.cancelDownload} />
+            {upgradeDl ? (
+              <View style={styles.dlBar}>
+                <View style={styles.flex}>
+                  <Text style={styles.dlText} numberOfLines={1}>
+                    작은 모델 받는 중 {Math.round((upgradeDl.progress?.ratio ?? 0) * 100)}%
+                    {upgradeDl.progress?.detail ? ` · ${upgradeDl.progress.detail}` : ''}
+                  </Text>
+                  <View style={styles.dlTrack}>
+                    <View style={[styles.dlFill, { width: `${Math.round((upgradeDl.progress?.ratio ?? 0) * 100)}%` }]} />
+                  </View>
+                </View>
+                <Pressable onPress={() => upgradeAbort.current?.abort()} style={styles.hBtn}>
+                  <Text style={[styles.hBtnText, { color: colors.danger }]}>취소</Text>
+                </Pressable>
+              </View>
+            ) : null}
             {imageModel.status.kind === 'downloading' ? (
               <View style={styles.dlBar}>
                 <View style={styles.flex}>
@@ -565,6 +628,12 @@ export function ChatScreen({ model, settings, gpuInfo, onChangeSettings, onRemov
           imageModelStatus={imageModel.status}
           onDownloadImageModel={imageModel.download}
           onRemoveImageModel={imageModel.remove}
+          upgrade={upgrade}
+          upgrading={!!upgradeDl}
+          onUpgrade={() => {
+            setShowSettings(false);
+            startUpgrade();
+          }}
           onClose={() => setShowSettings(false)}
           onSave={(s) => {
             setShowSettings(false);
@@ -617,6 +686,9 @@ function SettingsModal({
   imageModelStatus,
   onDownloadImageModel,
   onRemoveImageModel,
+  upgrade,
+  upgrading,
+  onUpgrade,
   onClose,
   onSave,
   onRemoveModel,
@@ -629,6 +701,9 @@ function SettingsModal({
   imageModelStatus: ImageModelStatus;
   onDownloadImageModel: () => void;
   onRemoveImageModel: () => void;
+  upgrade: ModelUpgrade | null;
+  upgrading: boolean;
+  onUpgrade: () => void;
   onClose: () => void;
   onSave: (s: Settings) => void;
   onRemoveModel: () => void;
@@ -741,7 +816,7 @@ function SettingsModal({
           </Pressable>
         ) : null}
 
-        <StorageSection visible busy={visionStatus.kind === 'downloading' || imageModelStatus.kind === 'downloading'} />
+        <StorageSection visible busy={upgrading || visionStatus.kind === 'downloading' || imageModelStatus.kind === 'downloading'} />
 
         {imageModelStatus.kind !== 'unsupported' ? (
           <>
@@ -774,6 +849,17 @@ function SettingsModal({
         <Text style={styles.hint}>
           {model.name} ({formatBytes(model.size)})
         </Text>
+        {upgrade || upgrading ? (
+          <Pressable
+            style={[styles.send, { marginTop: 8 }, upgrading && styles.off]}
+            disabled={upgrading}
+            onPress={onUpgrade}
+          >
+            <Text style={styles.sendText}>
+              {upgrading ? '작은 모델 받는 중…' : `더 작은 모델로 교체 (−${formatBytes(upgrade!.saving)})`}
+            </Text>
+          </Pressable>
+        ) : null}
         <Pressable
           style={[styles.send, { backgroundColor: colors.danger, marginTop: 8 }]}
           onPress={() =>

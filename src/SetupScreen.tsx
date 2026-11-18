@@ -68,7 +68,7 @@ export function SetupScreen({ onInstalled }: { onInstalled: (m: InstalledModel) 
   const onDownloadPress = async () => {
     const net = await Network.getNetworkStateAsync().catch(() => null);
     if (net?.type === Network.NetworkStateType.CELLULAR) {
-      Alert.alert('모바일 데이터 사용', '약 3.2GB를 모바일 데이터로 받습니다. 계속할까요? (Wi-Fi 권장)', [
+      Alert.alert('모바일 데이터 사용', '약 2.4GB를 모바일 데이터로 받습니다. 계속할까요? (Wi-Fi 권장)', [
         { text: '취소', style: 'cancel' },
         { text: '받기', onPress: () => startDownload() },
       ]);
@@ -131,7 +131,7 @@ export function SetupScreen({ onInstalled }: { onInstalled: (m: InstalledModel) 
       </View>
       <Text style={styles.title}>Gemma Chat</Text>
       <Text style={styles.sub}>
-        처음 한 번만 모델(약 3.2GB)을 내려받습니다. 그 뒤 대화는 인터넷 없이 이 기기 안에서만 처리됩니다.
+        처음 한 번만 모델(약 2.4GB)을 내려받습니다. 그 뒤 대화는 인터넷 없이 이 기기 안에서만 처리됩니다.
       </Text>
 
       {busy ? (
@@ -164,7 +164,7 @@ export function SetupScreen({ onInstalled }: { onInstalled: (m: InstalledModel) 
           </Text>
           {lastError ? <Text style={[styles.muted, { color: colors.danger }]}>{lastError}</Text> : null}
           <Pressable style={styles.btn} onPress={onDownloadPress}>
-            <Text style={styles.btnText}>{hasPartialDownload() ? '이어서 받기' : '모델 다운로드 (약 3.2GB)'}</Text>
+            <Text style={styles.btnText}>{hasPartialDownload() ? '이어서 받기' : '모델 다운로드 (약 2.4GB)'}</Text>
           </Pressable>
         </View>
       )}

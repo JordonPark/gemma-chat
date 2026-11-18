@@ -196,3 +196,23 @@ export async function downloadModel(onProgress: OnProgress, signal: AbortSignal)
   const installed = new File(models, m.name);
   return { file: installed, path: toNativePath(installed.uri), name: installed.name, size: installed.size ?? 0 };
 }
+
+export type ModelUpgrade = { name: string; size: number; saving: number };
+
+/**
+ * Release 의 모델이 지금 설치된 것과 다르고 더 작으면 그 정보를 돌려준다 (예: 임베딩을 줄인 작은 모델).
+ * 확인에 실패하면 null (오프라인이면 조용히 넘어간다).
+ */
+export async function checkSmallerModel(installed: { name: string; size: number }): Promise<ModelUpgrade | null> {
+  const ac = new AbortController();
+  const timer = setTimeout(() => ac.abort(), 15_000);
+  try {
+    const m = await fetchManifest(ac.signal);
+    if (m.name === installed.name || m.size >= installed.size) return null;
+    return { name: m.name, size: m.size, saving: installed.size - m.size };
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timer);
+  }
+}

@@ -126,6 +126,7 @@ export default function App() {
           gpuInfo={phase.gpuInfo}
           onChangeSettings={changeSettings}
           onRemoveModel={removeModel}
+          onModelReplaced={(m) => startModel(m, settings)}
         />
       );
       break;
