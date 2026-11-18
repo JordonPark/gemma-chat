@@ -1,0 +1,73 @@
+# 작은 채팅 모델 배포: 토큰 임베딩만 F16 → Q6_K (나머지 443개 텐서는 원본과 바이트 동일, 실험으로 확인)
+# 3.16GB → 2.36GB. Release(model-v1)의 manifest.json 을 새 모델로 바꾼다 (원래 manifest 는 manifest-f16embd.json 로 보관).
+name: Publish small model
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/publish-model-small.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      LLAMA_REF: b12292 # llama.rn 이 쓰는 llama.cpp 와 같은 버전
+      OUT_NAME: gemma-3-4b-it-q4_0-small.gguf
+      TAG: model-v1
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Download original model from Release
+        run: |
+          mkdir -p work && cd work
+          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --pattern 'gemma-3-4b-it-q4_0.gguf.part*' --pattern manifest.json
+          python3 -c "import json;m=json.load(open('manifest.json'));assert m['name']=='gemma-3-4b-it-q4_0.gguf', 'manifest already replaced: '+m['name']"
+          cp manifest.json manifest-f16embd.json
+          cat gemma-3-4b-it-q4_0.gguf.part* > orig.gguf && rm gemma-3-4b-it-q4_0.gguf.part*
+          python3 -c "import json,hashlib;m=json.load(open('manifest.json'));h=hashlib.sha256();f=open('orig.gguf','rb')
+          while (b:=f.read(1<<24)): h.update(b)
+          assert h.hexdigest()==m['sha256'], 'sha mismatch'; print('sha ok')"
+
+      - name: Build llama-quantize
+        run: |
+          git clone --depth 1 --branch "$LLAMA_REF" https://github.com/ggml-org/llama.cpp llama.cpp
+          cmake -S llama.cpp -B llama.cpp/build -DCMAKE_BUILD_TYPE=Release -DGGML_NATIVE=OFF -DLLAMA_CURL=OFF -DLLAMA_BUILD_TESTS=OFF
+          cmake --build llama.cpp/build -j4 --target llama-quantize
+          pip install --quiet numpy ./llama.cpp/gguf-py
+
+      - name: Quantize token embedding to Q6_K
+        run: |
+          ./llama.cpp/build/bin/llama-quantize --allow-requantize --token-embedding-type q6_K work/orig.gguf "work/$OUT_NAME" Q4_0 > work/q.log 2>&1 || (tail -30 work/q.log; exit 1)
+          python3 tools/shrink_embeddings.py inspect "work/$OUT_NAME" | tee work/i.txt
+          python3 tools/shrink_embeddings.py diff work/orig.gguf "work/$OUT_NAME" | tee work/d.txt
+          # 임베딩 1개만 바뀌고 나머지는 원본과 같아야 한다
+          grep -q "type_changed=1 data_changed_same_type=0" work/d.txt
+          echo "::notice title=small model::$(tr '\n' ' ' < work/i.txt) || $(tr '\n' ' ' < work/d.txt)"
+
+      - name: Split + manifest
+        run: |
+          rm work/orig.gguf
+          python3 tools/split_model.py "work/$OUT_NAME" --size 1900M --out dist
+          cat > dist/NOTICE.txt <<'EOF'
+          Gemma is provided under and subject to the Gemma Terms of Use found at ai.google.dev/gemma/terms
+
+          Source: https://huggingface.co/google/gemma-3-4b-it-qat-q4_0-gguf
+          Modification: the token embedding tensor was requantized from F16 to Q6_K with llama.cpp (b12292) llama-quantize;
+          all other tensors are unchanged.
+          Use of this model must comply with the Gemma Terms of Use and the Gemma Prohibited Use Policy
+          (ai.google.dev/gemma/prohibited_use_policy).
+          EOF
+          cp work/manifest-f16embd.json dist/
+          ls -l dist
+          echo "::notice title=manifest::$(tr -d '\n' < dist/manifest.json | cut -c1-400)"
+
+      - name: Upload to GitHub Release
+        run: |
+          gh release upload "$TAG" dist/* --clobber --repo "$GITHUB_REPOSITORY"
