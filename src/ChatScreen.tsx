@@ -21,7 +21,6 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { activateKeepAwakeAsync, deactivateKeepAwake } from 'expo-keep-awake';
-import * as Sharing from 'expo-sharing';
 import {
   checkGeneratedContent,
   generateReply,
@@ -46,7 +45,6 @@ import { ReportContent } from './ReportContent';
 import { APP_NAME, SUPPORT_BASE_URL } from './storeConfig';
 import { formatBytes, type ImportProgress, type InstalledModel } from './modelStore';
 import { Markdown } from './Markdown';
-import { SvgCard } from './SvgCard'; // 예전에 만든 일러스트 표시용
 import { UpdateBanner, checkForUpdateInteractive, describeAppVersion } from './UpdateBanner';
 import { loadChatLibrary, saveChatLibrary } from './storage';
 import { colors } from './theme';
@@ -612,15 +610,12 @@ export function ChatScreen({ model, settings, gpuInfo, initialInput = '', onChan
                       uri={item.picture}
                       size={mediaSize}
                       caption={item.content.replace(/^\[그림: (.*)\]$/, '$1')}
-                      onOpen={(uri) => openPreview({ uri, title: '생성한 그림' })}
+                      onOpen={(uri) => openPreview({ uri, title: '예전 그림' })}
                     />
                   ) : item.role === 'assistant' && item.svg ? (
-                    <SvgCard
-                      svg={item.svg}
-                      size={mediaSize}
-                      caption={item.content.replace(/^\[일러스트: (.*)\]$/, '$1')}
-                      onOpen={(svg) => openPreview({ svg, title: '일러스트' })}
-                    />
+                    <Text style={styles.hint}>
+                      🖼 예전 버전에서 만든 도형 일러스트입니다. 그림 기능이 빠져 더 이상 표시하지 않습니다.
+                    </Text>
                   ) : item.role === 'assistant' ? (
                     <Markdown text={item.content} />
                   ) : (
@@ -1072,36 +1067,22 @@ function PhotoThumbnail({ uri, label, style, onOpen }: {
   );
 }
 
-/** 기기에서 생성한 그림 카드: 크게 보기 + 저장·공유 */
+/** 예전 버전에서 만든 그림 (그림 기능은 뺐다): 크게 보기만 */
 function PictureCard({ uri, size, caption, onOpen }: {
   uri: string;
   size: number;
   caption?: string;
   onOpen: (uri: string) => void;
 }) {
-  const share = async () => {
-    try {
-      if (!(await Sharing.isAvailableAsync())) {
-        Alert.alert('공유', '이 기기에서는 공유를 사용할 수 없습니다.');
-        return;
-      }
-      await Sharing.shareAsync(uri, { mimeType: 'image/png', dialogTitle: '그림 저장·공유', UTI: 'public.png' });
-    } catch (e: any) {
-      Alert.alert('저장·공유 실패', String(e?.message ?? e));
-    }
-  };
   return (
     <View style={{ gap: 8 }}>
       <PhotoThumbnail
         uri={uri}
-        label="생성한 그림 크게 보기"
+        label="예전 그림 크게 보기"
         style={[styles.picture, { width: size, height: size }]}
         onOpen={onOpen}
       />
       {caption ? <Text style={styles.hint}>{caption}</Text> : null}
-      <Pressable onPress={share} style={[styles.hBtn, { alignSelf: 'flex-start', minHeight: 44 }]}>
-        <Text style={styles.hBtnText}>저장 · 공유</Text>
-      </Pressable>
     </View>
   );
 }

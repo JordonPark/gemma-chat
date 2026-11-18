@@ -9,6 +9,7 @@ import { LegalConsent } from './src/LegalInfo';
 import { LoadingScreen } from './src/LoadingScreen';
 import { SetupScreen } from './src/SetupScreen';
 import { removeLegacyImageModel } from './src/legacyDrawing';
+import { acceptLowMemory, deviceMemoryBytes, formatMemory, shouldWarnLowMemory } from './src/deviceCheck';
 import { loadModel, unloadModel, type Settings } from './src/llm';
 import { deleteInstalledModels, findInstalledModel, type InstalledModel } from './src/modelStore';
 import { acceptModelTerms, hasAcceptedModelTerms, loadSettings, saveSettings } from './src/storage';
@@ -16,6 +17,7 @@ import { colors, isDark } from './src/theme';
 
 type Phase =
   | { kind: 'scanning' }
+  | { kind: 'unsupported' }
   | { kind: 'setup' }
   | { kind: 'loading'; model: InstalledModel; pct: number }
   | { kind: 'ready'; model: InstalledModel; gpuInfo: string; initialInput: string }
@@ -61,18 +63,26 @@ export default function App() {
     removeLegacyImageModel();
   }, []);
 
+  const boot = useCallback(async (checkMemory: boolean) => {
+    // RAM 이 모자란 기기는 3GB 를 받거나 모델을 올리기 전에 먼저 안내한다 (강제 종료 방지)
+    if (checkMemory && shouldWarnLowMemory()) {
+      await holdSplash();
+      setPhase({ kind: 'unsupported' });
+      return;
+    }
+    const m = await findInstalledModel();
+    if (m) startModel(m, settings);
+    else {
+      await holdSplash();
+      setPhase({ kind: 'setup' });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [holdSplash, startModel]);
+
   useEffect(() => {
     if (!acceptedTerms) return;
-    (async () => {
-      const m = await findInstalledModel();
-      if (m) startModel(m, settings);
-      else {
-        await holdSplash();
-        setPhase({ kind: 'setup' });
-      }
-    })();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [acceptedTerms]);
+    boot(true);
+  }, [acceptedTerms, boot]);
 
   const removeModel = async () => {
     await unloadModel();
@@ -102,6 +112,35 @@ export default function App() {
   } else switch (phase.kind) {
     case 'scanning':
       body = <LoadingScreen status="준비 중" />;
+      break;
+    case 'unsupported':
+      body = (
+        <Center>
+          <Text style={[styles.text, { fontWeight: '700' }]}>이 기기는 메모리가 부족해요</Text>
+          <Text style={styles.muted}>
+            이 앱은 AI 모델을 기기 안에서 직접 실행해서 메모리(RAM)가 6GB 이상 필요합니다. 이 기기의 메모리는{' '}
+            {formatMemory(deviceMemoryBytes())}입니다. 그대로 쓰면 답변 중에 앱이 꺼질 수 있습니다.
+          </Text>
+          <Pressable
+            style={[styles.btn, { backgroundColor: colors.border }]}
+            onPress={() =>
+              Alert.alert('그래도 계속할까요?', '약 3GB 를 내려받고, 답변 중에 앱이 꺼질 수 있습니다.', [
+                { text: '취소', style: 'cancel' },
+                {
+                  text: '계속',
+                  onPress: () => {
+                    acceptLowMemory();
+                    setPhase({ kind: 'scanning' });
+                    boot(false);
+                  },
+                },
+              ])
+            }
+          >
+            <Text style={[styles.btnText, { color: colors.text }]}>그래도 계속 (권장하지 않음)</Text>
+          </Pressable>
+        </Center>
+      );
       break;
     case 'setup':
       body = <SetupScreen onInstalled={(m, initialInput) => startModel(m, settings, initialInput)} />;

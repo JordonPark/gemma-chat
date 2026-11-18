@@ -220,6 +220,22 @@ Mac이 없으면 GitHub Actions의 macOS 서버가 **서명 없는 .ipa**를 빌
 npx eas-cli@latest build -p android --profile production
 ```
 
+## 3-0. 스토어 출시 체크리스트
+
+코드에서 처리한 것 (스토어 빌드 = `eas build --profile store`, `EXPO_PUBLIC_STORE_BUILD=1`):
+- RAM 6GB 미만 기기는 처음에 "메모리 부족" 안내를 보여 주고 모델을 받지 않는다 (`src/deviceCheck.ts`, "그래도 계속" 가능)
+- 개발·테스트용 화면 숨김: 파일로 직접 설치(PC 도구·Finder), GitHub 저장소 안내, 파일 앱 공유(`UIFileSharingEnabled`)
+- 그림 기능 잔여물 제거: `react-native-svg`, `react-native-view-shot`, `expo-sharing`, 사진 앱 저장 권한 문구
+- 빌드 번호 자동 증가: `eas.json` `appVersionSource: remote` + store `autoIncrement` (iOS buildNumber 1, Android versionCode 16 이 시작값)
+- iOS 개인정보 매니페스트(`ios.privacyManifests`): 파일 시각·남은 공간·부팅 시간·UserDefaults 사용 이유, 신고 내용 수집(연결·추적 안 함)
+- Android 네이티브 라이브러리 16KB 페이지 정렬 확인됨 (llama.rn)
+
+콘솔에서 할 것:
+- 신고·개인정보 서버(`support/`) 배포 후 `EXPO_PUBLIC_SUPPORT_BASE_URL` 설정 (없으면 스토어 빌드가 실패한다)
+- App Store Connect: 개인정보 라벨(신고 내용·문의 이메일), 연령 등급 설문(생성형 AI 채팅), App ID 의 Increased Memory Limit 기능, iPad 스크린샷, 심사 메모("처음 실행 시 Wi-Fi 로 약 3GB 를 받고, 이후 모든 처리는 기기 안에서 합니다")
+- Google Play Console: 데이터 보안 양식, 콘텐츠 등급 설문, 기기 카탈로그에서 RAM 6GB 미만 제외
+- 모델 배포 위치: 사용자가 많아지면 GitHub Releases 대신 CDN(예: Cloudflare R2)으로 옮기는 것을 권장
+
 ## 3-1. OTA 업데이트 (앱을 다시 설치하지 않고 업데이트)
 
 화면·로직(JS) 변경은 `.ipa`/`.apk`를 다시 설치하지 않아도 됩니다. 앱이 Wi-Fi에서 켜질 때 업데이트를 받아 두고, 화면 위 **"다시 시작"**을 누르거나 다음에 앱을 열 때 적용합니다(expo-updates + EAS Update). 설정 › **업데이트 확인**으로 직접 확인할 수도 있습니다.

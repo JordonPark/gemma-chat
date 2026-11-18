@@ -11,16 +11,14 @@ import {
 } from 'react-native';
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 import { StatusBar } from 'expo-status-bar';
-import { SvgXml } from 'react-native-svg';
 import { FoldAwareArea } from './FoldAwareArea';
 import { getFoldInsets } from './foldLayout';
 import { boundImage, fitImage, MAX_IMAGE_ZOOM, zoomImage, type ImageTransform } from './imageZoom';
 
-export type ImagePreview = { title: string } & ({ uri: string } | { svg: string });
+export type ImagePreview = { title: string; uri: string };
 
 const CENTER = { x: 0, y: 0 };
 const FITTED = { ...CENTER, scale: 1 };
-const ILLUSTRATION_SIZE = { width: 512, height: 512 };
 
 function sampleTouches(event: GestureResponderEvent) {
   const [first, second] = event.nativeEvent.touches;
@@ -71,7 +69,7 @@ type TouchSample = NonNullable<ReturnType<typeof sampleTouches>>;
 
 function ZoomableImage({ media }: { media: ImagePreview }) {
   const [viewport, setViewport] = useState({ width: 0, height: 0 });
-  const [imageSize, setImageSize] = useState('svg' in media ? ILLUSTRATION_SIZE : null);
+  const [imageSize, setImageSize] = useState<{ width: number; height: number } | null>(null);
   const [broken, setBroken] = useState(false);
   const [zoom, setZoom] = useState(1);
   const [animated] = useState(() => ({
@@ -163,8 +161,7 @@ function ZoomableImage({ media }: { media: ImagePreview }) {
               transform: [{ translateX: animated.x }, { translateY: animated.y }, { scale: animated.scale }],
             }]}
           >
-            {'uri' in media ? (
-              <Image
+            <Image
                 source={{ uri: media.uri }}
                 style={styles.image}
                 resizeMode="contain"
@@ -175,11 +172,6 @@ function ZoomableImage({ media }: { media: ImagePreview }) {
                 }}
                 onError={() => setBroken(true)}
               />
-            ) : (
-              <View style={styles.illustration}>
-                <SvgXml xml={media.svg} width="100%" height="100%" onError={() => setBroken(true)} />
-              </View>
-            )}
           </Animated.View>
         )}
       </View>
@@ -219,7 +211,6 @@ const styles = StyleSheet.create({
   title: { flex: 1, color: '#F7F2FF', fontSize: 17, fontWeight: '700' },
   viewport: { flex: 1, overflow: 'hidden', alignItems: 'center', justifyContent: 'center' },
   image: { width: '100%', height: '100%' },
-  illustration: { flex: 1, backgroundColor: '#FFF' },
   controls: { flexDirection: 'row', justifyContent: 'center', gap: 8, padding: 10 },
   control: {
     minHeight: 44, minWidth: 44, alignItems: 'center', justifyContent: 'center',

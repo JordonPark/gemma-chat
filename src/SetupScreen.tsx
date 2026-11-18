@@ -14,7 +14,7 @@ import {
 } from './modelStore';
 import { DownloadCancelled, downloadModel, fetchManifest, formatDownloadEta, hasPartialDownload } from './modelDownload';
 import { downloadVision, fetchVisionManifest, findInstalledVision } from './vision';
-import { APP_NAME } from './storeConfig';
+import { APP_NAME, STORE_BUILD } from './storeConfig';
 import { LegalInfo } from './LegalInfo';
 import { SetupPreview } from './SetupPreview';
 import { colors } from './theme';
@@ -232,8 +232,9 @@ export function SetupScreen({ onInstalled }: { onInstalled: (m: InstalledModel, 
         <View style={styles.card}>
           <Text style={styles.h}>Gemma 3 4B 모델 다운로드</Text>
           <Text style={styles.p}>
-            GitHub 저장소(JordonPark/gemma-chat)의 Release 에서 조각을 받아 기기 안에서 이어 붙이고 SHA-256 으로
-            검증합니다. Wi-Fi 연결을 권장합니다.
+            {STORE_BUILD
+              ? '모델 파일을 받아 기기 안에서 무결성을 확인한 뒤 설치합니다. Wi-Fi 연결을 권장합니다.'
+              : 'GitHub 저장소(JordonPark/gemma-chat)의 Release 에서 조각을 받아 기기 안에서 이어 붙이고 SHA-256 으로 검증합니다. Wi-Fi 연결을 권장합니다.'}
           </Text>
           {lastError ? <Text style={[styles.muted, { color: colors.danger }]}>{lastError}</Text> : null}
           <Pressable style={styles.btn} onPress={onDownloadPress}>
@@ -245,11 +246,14 @@ export function SetupScreen({ onInstalled }: { onInstalled: (m: InstalledModel, 
       <SetupPreview onChoosePrompt={choosePrompt} />
       <LegalInfo />
 
+      {/* 개발·테스트용 수동 설치(PC 도구, Finder)는 스토어 빌드에서 숨긴다 */}
+      {!STORE_BUILD && (
       <Pressable style={styles.link} onPress={() => setShowManual((v) => !v)} disabled={!!busy}>
         <Text style={styles.linkText}>{showManual ? '▾' : '▸'} 인터넷 없이 파일로 직접 설치</Text>
       </Pressable>
+      )}
 
-      {showManual && (
+      {!STORE_BUILD && showManual && (
         <>
           <View style={styles.card}>
             <Text style={styles.p}>

@@ -61,6 +61,7 @@ const config: ExpoConfig = {
   ios: {
     bundleIdentifier: 'com.jordonpark.gemmachat',
     supportsTablet: true,
+    // 스토어 빌드 번호는 EAS 가 올린다 (eas.json: appVersionSource remote + autoIncrement). 여기 값은 처음 한 번만 쓰이는 시작값
     ...(storeBuild ? { buildNumber: '1' } : {}),
     infoPlist: {
       UISupportedInterfaceOrientations: [
@@ -74,12 +75,34 @@ const config: ExpoConfig = {
         'UIInterfaceOrientationLandscapeLeft',
         'UIInterfaceOrientationLandscapeRight',
       ],
-      // Finder(맥) / 파일 앱에서 앱의 Documents 폴더에 모델 파일을 직접 넣을 수 있게 한다.
-      UIFileSharingEnabled: true,
-      LSSupportsOpeningDocumentsInPlace: true,
+      // Finder(맥) / 파일 앱에서 앱의 Documents 폴더에 모델 파일을 직접 넣을 수 있게 한다 (개발·테스트 빌드만).
+      // 스토어 빌드는 앱 내부 폴더(대화 사진·기억 등)를 파일 앱에 드러내지 않는다.
+      ...(storeBuild ? {} : { UIFileSharingEnabled: true, LSSupportsOpeningDocumentsInPlace: true }),
       ITSAppUsesNonExemptEncryption: false,
-      // 공유 시트의 "이미지 저장"으로 일러스트를 사진 앱에 저장할 때 필요
-      NSPhotoLibraryAddUsageDescription: '공유 메뉴에서 이미지를 사진 앱에 저장할 때 사용합니다.',
+    },
+    // Apple 개인정보 매니페스트: 앱과 llama.rn 이 쓰는 "사용 이유 필요 API" 와 수집 데이터 선언.
+    // 수집하는 것은 사용자가 직접 보내는 신고 내용(답변 텍스트)뿐이며, 사용자와 연결하거나 추적하지 않는다.
+    privacyManifests: {
+      NSPrivacyTracking: false,
+      NSPrivacyTrackingDomains: [],
+      NSPrivacyAccessedAPITypes: [
+        // 모델·사진 파일 크기·수정 시각 확인 (앱 컨테이너 안 파일)
+        { NSPrivacyAccessedAPIType: 'NSPrivacyAccessedAPICategoryFileTimestamp', NSPrivacyAccessedAPITypeReasons: ['C617.1'] },
+        // 수 GB 모델을 받기 전에 남은 공간 확인 / 저장 공간 화면에 표시
+        { NSPrivacyAccessedAPIType: 'NSPrivacyAccessedAPICategoryDiskSpace', NSPrivacyAccessedAPITypeReasons: ['E174.1', '85F4.1'] },
+        // 생성 속도(tok/s)·경과 시간 측정
+        { NSPrivacyAccessedAPIType: 'NSPrivacyAccessedAPICategorySystemBootTime', NSPrivacyAccessedAPITypeReasons: ['35F9.1'] },
+        // 앱 설정 저장 (React Native)
+        { NSPrivacyAccessedAPIType: 'NSPrivacyAccessedAPICategoryUserDefaults', NSPrivacyAccessedAPITypeReasons: ['CA92.1'] },
+      ],
+      NSPrivacyCollectedDataTypes: [
+        {
+          NSPrivacyCollectedDataType: 'NSPrivacyCollectedDataTypeOtherUserContent',
+          NSPrivacyCollectedDataTypeLinked: false,
+          NSPrivacyCollectedDataTypeTracking: false,
+          NSPrivacyCollectedDataTypePurposes: ['NSPrivacyCollectedDataTypePurposeAppFunctionality'],
+        },
+      ],
     },
   },
   android: {
@@ -91,6 +114,7 @@ const config: ExpoConfig = {
       monochromeImage: './assets/android-icon-monochrome.png',
     },
     predictiveBackGestureEnabled: false,
+    // versionCode 도 EAS 가 스토어 빌드마다 올린다 (여기 16 은 시작값)
     ...(storeBuild ? { versionCode: 16, allowBackup: false } : {}),
     blockedPermissions: [
       ...(offlineOnly ? ['android.permission.INTERNET'] : []),

@@ -1,8 +1,6 @@
 import { useState } from 'react';
 import { Modal, Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
-import { File } from 'expo-file-system';
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
-import { ImageManipulator, SaveFormat } from 'expo-image-manipulator';
 import type { ChatMessage } from './llm';
 import { APP_VERSION, SUPPORT_BASE_URL } from './storeConfig';
 import { colors } from './theme';
@@ -28,18 +26,9 @@ export function ReportContent({ item, onClose }: { item: ChatMessage; onClose: (
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), 15_000);
     try {
-      const type = item.picture ? 'image/jpeg;base64' : item.svg ? 'image/svg+xml' : 'text/plain';
-      let content = item.svg ?? item.content.slice(0, 24_000);
-      if (item.picture) {
-        const image = await ImageManipulator.manipulate(item.picture).resize({ width: 512 }).renderAsync();
-        const saved = await image.saveAsync({ format: SaveFormat.JPEG, compress: 0.7 });
-        const file = new File(saved.uri);
-        try {
-          content = await file.base64();
-        } finally {
-          if (file.exists) file.delete();
-        }
-      }
+      // 신고는 답변 텍스트만 보낸다 (개인정보처리방침과 일치)
+      const type = 'text/plain';
+      const content = item.content.slice(0, 24_000);
       const response = await fetch(`${SUPPORT_BASE_URL}/reports`, {
         method: 'POST',
         signal: controller.signal,
