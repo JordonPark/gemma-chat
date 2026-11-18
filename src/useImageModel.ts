@@ -2,6 +2,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Alert } from 'react-native';
 import { activateKeepAwakeAsync, deactivateKeepAwake } from 'expo-keep-awake';
+import * as Network from 'expo-network';
 import {
   checkImageModelUpdate,
   deleteImageModel,
@@ -74,6 +75,21 @@ export function useImageModel(onDownloaded?: (path: string) => void) {
   }, []);
 
   const cancelDownload = useCallback(() => abortRef.current?.abort(), []);
+
+  // 예전 그림 모델이 깔려 있으면 Wi-Fi 에서 앱을 열 때 새 모델로 자동 교체한다 (설정의 교체 버튼을 누르지 않아도 됨)
+  const autoChecked = useRef(false);
+  useEffect(() => {
+    if (autoChecked.current || !isImageGenAvailable() || !findInstalledImageModel()) return;
+    autoChecked.current = true;
+    const timer = setTimeout(async () => {
+      const net = await Network.getNetworkStateAsync().catch(() => null);
+      const unmetered = net?.type === Network.NetworkStateType.WIFI || net?.type === Network.NetworkStateType.ETHERNET;
+      if (!unmetered || abortRef.current) return;
+      const u = await checkImageModelUpdate();
+      if (u && !abortRef.current) download(); // 예전 모델은 받기 시작할 때 지워진다
+    }, 5_000); // 채팅 모델이 먼저 뜨도록 잠깐 기다린다
+    return () => clearTimeout(timer);
+  }, [download]);
 
   // 새 그림 모델이 나왔는지 (설정을 열 때 한 번 확인)
   const [update, setUpdate] = useState<ImageModelUpdate | null>(null);

@@ -92,6 +92,10 @@ export function ChatScreen({ model, settings, gpuInfo, onChangeSettings, onRemov
   const inputRef = useRef<ComponentRef<typeof TextInput>>(null);
   const listRef = useRef<FlatList<ChatMessage>>(null);
   const followLatest = useRef(true);
+  const busyRef = useRef(false);
+  useEffect(() => {
+    busyRef.current = streaming !== null || drawing !== null;
+  }, [streaming, drawing]);
   const vision = useVision(settings);
   // 그림 모델을 다 받으면 바로 준비(Neural Engine 컴파일)까지 해 둔다 → 첫 그림부터 기다림 없이 그린다
   const pendingDrawRef = useRef<string | null>(null);
@@ -244,6 +248,8 @@ export function ChatScreen({ model, settings, gpuInfo, onChangeSettings, onRemov
 
   /** 그림 모델 첫 준비: 채팅 모델을 잠시 내리고 컴파일한 뒤 다시 올린다. 기다리던 그림 요청이 있으면 이어서 진행 */
   prepareRef.current = async () => {
+    // 답변을 만들거나 그리는 중이면 끝날 때까지 기다렸다가 채팅 모델을 내린다
+    while (busyRef.current) await new Promise((r) => setTimeout(r, 500));
     followLatest.current = true;
     setDrawing({ desc: '', svg: null, chars: 0, phase: '그림 모델을 처음 준비하는 중… (이 기기에서 한 번만, 1~3분)' });
     await activateKeepAwakeAsync('sd-prepare');
