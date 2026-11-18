@@ -1,6 +1,7 @@
 import ExpoModulesCore
 import ImageIO
 import Vision
+import VisionKit
 
 /// Apple Vision 으로 사진 속 글자를 읽는다 (한국어 + 영어, 정확도 우선, 기기 안에서만 처리).
 public final class ExpoOcrModule: Module {
@@ -16,6 +17,36 @@ public final class ExpoOcrModule: Module {
         }
       }
     }
+
+    /// 이 기기에서 실시간 글자 스캔을 쓸 수 있는지 (iOS 16+, A12 칩 이상)
+    Function("isScanSupported") { () -> Bool in
+      if #available(iOS 16.0, *) {
+        return DataScannerViewController.isSupported
+      }
+      return false
+    }
+
+    /// 실시간 글자 스캔 화면을 띄우고, 읽은 글자를 돌려준다 (취소하면 nil).
+    /// 사진을 찍지 않으므로 셔터 소리가 없고 사진도 남지 않는다.
+    AsyncFunction("scanText") { (promise: Promise) in
+      guard #available(iOS 16.0, *), DataScannerViewController.isSupported else {
+        promise.reject("ERR_SCAN_UNSUPPORTED", "이 기기에서는 실시간 글자 스캔을 쓸 수 없습니다. 앨범에서 사진을 골라 주세요.")
+        return
+      }
+      guard DataScannerViewController.isAvailable else {
+        promise.reject("ERR_SCAN_UNAVAILABLE", "카메라를 쓸 수 없습니다. 설정에서 카메라 권한을 허용해 주세요.")
+        return
+      }
+      guard let presenter = self.appContext?.utilities?.currentViewController() else {
+        promise.reject("ERR_SCAN", "화면을 열 수 없습니다.")
+        return
+      }
+      let supported = DataScannerViewController.supportedTextRecognitionLanguages
+      let languages = ["ko-KR", "en-US"].filter { supported.contains($0) }
+      let vc = TextScanController(languages: languages)
+      vc.onFinish = { text in promise.resolve(text) }
+      presenter.present(vc, animated: true)
+    }.runOnQueue(.main)
   }
 
   private struct OcrError: LocalizedError {

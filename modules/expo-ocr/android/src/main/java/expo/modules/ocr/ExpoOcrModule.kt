@@ -6,6 +6,7 @@ import com.google.mlkit.vision.text.TextRecognition
 import com.google.mlkit.vision.text.TextRecognizer
 import com.google.mlkit.vision.text.korean.KoreanTextRecognizerOptions
 import expo.modules.kotlin.Promise
+import expo.modules.kotlin.functions.Queues
 import expo.modules.kotlin.modules.Module
 import expo.modules.kotlin.modules.ModuleDefinition
 import java.io.File
@@ -59,6 +60,24 @@ class ExpoOcrModule : Module() {
         }
         .addOnFailureListener { e -> promise.reject("ERR_OCR", e.message ?: "OCR 실패", e) }
     }
+
+    /** 실시간 글자 스캔은 카메라가 있는 Android 기기면 쓸 수 있다 */
+    Function("isScanSupported") {
+      appContext.reactContext?.packageManager?.hasSystemFeature(android.content.pm.PackageManager.FEATURE_CAMERA_ANY) == true
+    }
+
+    /**
+     * 실시간 글자 스캔 화면을 띄우고 읽은 글자를 돌려준다 (취소하면 null).
+     * 사진을 찍지 않고 카메라 미리보기를 바로 읽으므로 셔터 소리가 없다. 카메라 권한은 JS 에서 먼저 받는다.
+     */
+    AsyncFunction("scanText") { promise: Promise ->
+      val activity = appContext.currentActivity
+      if (activity == null) {
+        promise.reject("ERR_SCAN", "화면을 열 수 없습니다.", null)
+        return@AsyncFunction
+      }
+      TextScanDialog(activity, client()) { text -> promise.resolve(text) }.show()
+    }.runOnQueue(Queues.MAIN)
 
     OnDestroy {
       recognizer?.close()

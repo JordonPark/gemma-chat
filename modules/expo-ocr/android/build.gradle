@@ -17,4 +17,9 @@ android {
 dependencies {
   // ML Kit 한국어 인식 모델을 앱에 포함 (Google Play 서비스·인터넷 없이 동작). 한글과 영문을 함께 읽는다.
   implementation 'com.google.mlkit:text-recognition-korean:16.0.1'
+  // 실시간 글자 스캔: 카메라 미리보기를 바로 읽는다 (사진을 찍지 않아 셔터 소리 없음)
+  def camerax = '1.4.2'
+  implementation "androidx.camera:camera-camera2:${camerax}"
+  implementation "androidx.camera:camera-lifecycle:${camerax}"
+  implementation "androidx.camera:camera-view:${camerax}"
 }
