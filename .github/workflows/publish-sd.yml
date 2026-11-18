@@ -41,15 +41,19 @@ jobs:
           echo "RES=$PWD/$RES" >> "$GITHUB_ENV"
           echo "::notice title=model contents::$(ls "$RES" | tr '\n' ' ')"
 
-      - name: Add Apple SafetyChecker, drop VAEEncoder
+      - name: Add Apple SafetyChecker and tokenizer, drop VAEEncoder
         run: |
           cd work
           gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --pattern "$SAFETY_SRC" --pattern sd.json
-          unzip -q "$SAFETY_SRC" '*SafetyChecker.mlmodelc/*' -d safety && rm "$SAFETY_SRC"
+          # 안전 검사 + SD 1.5 공통 CLIP 토크나이저(vocab.json, merges.txt; 변환본에 빠져 있음)를 Apple 패키지에서 가져온다
+          unzip -q "$SAFETY_SRC" '*SafetyChecker.mlmodelc/*' '*vocab.json' '*merges.txt' -d safety && rm "$SAFETY_SRC"
           SC=$(find safety -type d -name 'SafetyChecker.mlmodelc' | head -1)
           [ -n "$SC" ] || { echo "::error::SafetyChecker 를 찾지 못했습니다"; exit 1; }
           rm -rf "$RES/SafetyChecker.mlmodelc" "$RES/VAEEncoder.mlmodelc"
           cp -R "$SC" "$RES/"
+          for t in vocab.json merges.txt; do
+            [ -e "$RES/$t" ] || cp "$(find safety -name "$t" | head -1)" "$RES/"
+          done
           for f in TextEncoder.mlmodelc Unet.mlmodelc VAEDecoder.mlmodelc SafetyChecker.mlmodelc vocab.json merges.txt; do
             [ -e "$RES/$f" ] || { echo "::error::$f 가 없습니다"; exit 1; }
           done
