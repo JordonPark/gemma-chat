@@ -17,6 +17,7 @@ import {
 import { UNIT_IDS, contextForPrompt, todayLine, type ToolCall } from './tools';
 import { LANGUAGE_GUIDE, LANGUAGE_REMINDER, needsKoreanRetry } from './languagePolicy';
 import type { PhotoAnnotations } from './photoAnnotate';
+import { SOLVE_GUIDE, isSolveRequest } from './problemSolve';
 
 export type Role = 'user' | 'assistant';
 /**
@@ -197,7 +198,10 @@ export async function generateReply(
 
   // 시스템 프롬프트 = 안전 기준 + 언어 규칙 + 사용자 설정 + 오늘 날짜 + 기억해 둔 내용 + 안전·언어 재확인
   // (사용자 프롬프트·기억에 "규칙 무시" 같은 말이 있어도 안전 기준이 앞뒤에서 우선한다)
-  const system = [SAFETY_GUIDE, LANGUAGE_GUIDE, settings.systemPrompt.trim(), contextForPrompt(), SAFETY_REMINDER, LANGUAGE_REMINDER]
+  // 사진 속 문제 풀이 요청이면: 문제 옮겨 적기 → 단계별 풀이 → "정답:" 형식, 더 차분한(낮은) temperature
+  const lastUser = [...history].reverse().find((m) => m.role === 'user');
+  const solving = !!lastUser && isSolveRequest(lastUser.content, !!lastUser.image);
+  const system = [SAFETY_GUIDE, LANGUAGE_GUIDE, settings.systemPrompt.trim(), solving ? SOLVE_GUIDE : '', contextForPrompt(), SAFETY_REMINDER, LANGUAGE_REMINDER]
     .filter(Boolean)
     .join('\n\n');
   const sysTokens = (await c.tokenize(system)).tokens.length;
@@ -247,7 +251,7 @@ export async function generateReply(
         messages: msgs,
         jinja: true,
         n_predict: settings.maxNewTokens,
-        temperature: settings.temperature,
+        temperature: solving ? Math.min(settings.temperature, 0.3) : settings.temperature,
         top_k: 64,
         top_p: 0.95,
         min_p: 0.0,

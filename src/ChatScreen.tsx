@@ -39,6 +39,7 @@ import { DuoToolbar, hasDuoToolbar } from './DuoToolbar';
 import { FoldAwareArea } from './FoldAwareArea';
 import { AnnotatedPhoto } from './AnnotatedPhoto';
 import { analysisHeader, analyzePhoto, needsTranslation, type PhotoAnalysis, type PhotoAnnotations } from './photoAnnotate';
+import { SOLVE_HEADER, arithmeticNote, isSolveRequest } from './problemSolve';
 import { clearMemories, loadMemories, mightNeedTool, removeMemory, runTool } from './tools';
 import { getChatLayout, getFoldInsets, minInlineComposerWidth, type Division } from './foldLayout';
 import { deletePictures } from './legacyDrawing';
@@ -404,11 +405,19 @@ export function ChatScreen({ model, settings, gpuInfo, initialInput = '', onChan
           console.warn('tool failed', e); // 도구가 실패하면 평소처럼 모델이 답한다
         }
       }
-      setStreaming(userMsg.image ? '사진을 분석하는 중…' : '답변을 준비하는 중…');
+      setStreaming(
+        isSolveRequest(userMsg.content, !!userMsg.image) ? '문제를 푸는 중…' : userMsg.image ? '사진을 분석하는 중…' : '답변을 준비하는 중…',
+      );
       replyStage = true;
       const { text: reply, stats: st } = await generateReply(history, settings);
       // 사진 답은 "분석되었습니다." + 기기에서 찾은 물건·글자 요약으로 시작한다
-      const content = userMsg.image ? `${analysisHeader(userMsg.annot)}\n\n${reply}` : reply || '(빈 응답)';
+      // 문제 풀이면 풀이 속 계산을 기기 계산기로 다시 확인해, 다른 곳이 있으면 아래에 알려 준다
+      const solving = isSolveRequest(userMsg.content, !!userMsg.image);
+      const content = !userMsg.image
+        ? reply || '(빈 응답)'
+        : solving
+          ? `${SOLVE_HEADER}\n\n${reply}${arithmeticNote(reply)}`
+          : `${analysisHeader(userMsg.annot)}\n\n${reply}`;
       setMessages((prev) => [...prev, { id: uid(), role: 'assistant', content }]);
       setStats(st);
       answered = true;
@@ -745,6 +754,19 @@ export function ChatScreen({ model, settings, gpuInfo, initialInput = '', onChan
                         ? `글자 ${pendingOcr.length}자 인식`
                         : '사진 첨부됨'}
                   </Text>
+                  <Pressable
+                    accessibilityRole="button"
+                    accessibilityLabel="사진 속 문제 풀기"
+                    onPress={() => {
+                      // 질문을 직접 써도 되고, 비어 있으면 기본 문장을 넣어 준다 (보내기 전에 고칠 수 있음)
+                      if (!input.trim()) setInput('이 문제 풀어 주세요');
+                      inputRef.current?.focus();
+                    }}
+                    style={styles.pendingBtn}
+                    disabled={busy}
+                  >
+                    <Text style={styles.pendingBtnText}>문제 풀기</Text>
+                  </Pressable>
                   {isOcrAvailable() ? (
                     <Pressable
                       accessibilityRole="button"
@@ -767,7 +789,7 @@ export function ChatScreen({ model, settings, gpuInfo, initialInput = '', onChan
                   style={[styles.input, { maxHeight: inputHeight }]}
                   value={input}
                   onChangeText={setInput}
-                  placeholder="메시지 입력"
+                  placeholder={pendingImage ? "사진에 대해 물어보세요 (예: 이 문제 풀어줘)" : "메시지 입력"}
                   placeholderTextColor={colors.muted}
                   multiline
                   editable={!busy}
