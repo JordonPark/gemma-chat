@@ -34,6 +34,7 @@ import {
 import type { AreaSize } from '../modules/gemma-fold';
 import { ChatLibrary, type ChatScope } from './ChatLibrary';
 import { conversationName, hasConversationContent, makeConversation, removeTask, type ChatLibraryData, type ChatTask, type Conversation } from './conversationLibrary';
+import { DuoToolbar, hasDuoToolbar } from './DuoToolbar';
 import { FoldAwareArea } from './FoldAwareArea';
 import { clearMemories, loadMemories, mightNeedTool, removeMemory, runTool } from './tools';
 import { getChatLayout, getFoldInsets, minInlineComposerWidth, type Division } from './foldLayout';
@@ -461,6 +462,10 @@ export function ChatScreen({ model, settings, gpuInfo, initialInput = '', onChan
       + (upgradeTransfer.secondsLeft === undefined ? '' : ` · ${formatDownloadEta(upgradeTransfer.secondsLeft)}`)
     : '');
 
+  const openLibrary = () => {
+    Keyboard.dismiss();
+    setShowLibrary(true);
+  };
   const openSettings = () => setShowSettings(true);
   const openPreview = (media: ImagePreview) => {
     Keyboard.dismiss();
@@ -508,28 +513,28 @@ export function ChatScreen({ model, settings, gpuInfo, initialInput = '', onChan
       }]}>
         {showSidebar ? (
           <View style={[styles.sidebar, { width: layout.sidebarWidth, marginRight: layout.sidebarGap }]}>
-            <ChatLibrary {...libraryProps} onSettings={openSettings} />
+            <ChatLibrary {...libraryProps} onSettings={hasDuoToolbar ? undefined : openSettings} />
           </View>
         ) : null}
         <View style={styles.conversation}>
           <View style={splitTranscript ? { height: layout.transcriptHeight, overflow: 'hidden' } : styles.transcript}>
             <View style={styles.header}>
-              {!showSidebar ? (
+              {!showSidebar && !hasDuoToolbar ? (
                 <Pressable accessibilityRole="button" accessibilityLabel="대화와 테스크 메뉴" style={styles.hBtn}
-                  onPress={() => { Keyboard.dismiss(); setShowLibrary(true); }}>
+                  onPress={openLibrary}>
                   <Text style={styles.hBtnText}>☰</Text>
                 </Pressable>
               ) : null}
               <View style={styles.flex}>
                 <Text style={styles.title} accessibilityRole="header" numberOfLines={1}>
-                  {hasConversationContent(activeChat) ? conversationName(activeChat) : activeTask?.name ?? APP_NAME}
+                  {hasConversationContent(activeChat) ? conversationName(activeChat) : activeTask?.name ?? (hasDuoToolbar ? '새 대화' : APP_NAME)}
                 </Text>
                 <Text style={styles.subtitle} numberOfLines={1}>
                   {activeTask ? `${activeTask.name} · ` : ''}Gemma 3 4B · {gpuInfo}
                   {stats ? ` · ${stats.tokPerSec.toFixed(1)} tok/s` : ''}
                 </Text>
               </View>
-              {!showSidebar ? (
+              {!showSidebar && !hasDuoToolbar ? (
                 <>
                   <Pressable
                     accessibilityRole="button"
@@ -720,10 +725,12 @@ export function ChatScreen({ model, settings, gpuInfo, initialInput = '', onChan
   };
 
   return (
-    <KeyboardAvoidingView style={styles.flex} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
-      <SafeAreaView style={styles.flex}>
-        <FoldAwareArea>{renderWorkspace}</FoldAwareArea>
-      </SafeAreaView>
+    <KeyboardAvoidingView style={styles.flex} behavior={Platform.OS === 'ios' && !hasDuoToolbar ? 'padding' : undefined}>
+      <DuoToolbar busy={busy} onLibrary={openLibrary} onNewChat={() => newChat(activeChat.taskId)} onSettings={openSettings}>
+        <SafeAreaView style={styles.flex}>
+          <FoldAwareArea>{renderWorkspace}</FoldAwareArea>
+        </SafeAreaView>
+      </DuoToolbar>
 
       {showLibrary ? (
         <Modal onRequestClose={() => setShowLibrary(false)} animationType="slide" presentationStyle="fullScreen">
