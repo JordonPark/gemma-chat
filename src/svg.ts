@@ -77,19 +77,41 @@ export function countShapes(svg: string): number {
   return (svg.match(/<(rect|circle|ellipse|polygon|polyline|path|line)\b/gi) ?? []).length;
 }
 
+/**
+ * 완성 예시 (작은 모델은 예시를 보면 구조·스타일을 훨씬 잘 따라 한다).
+ * 주제와 상관없는 사과를 써서 결과가 예시를 베끼지 않게 한다.
+ */
+const EXAMPLE_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+<!-- plan: light-blue background; wooden table at bottom (y 380+); red apple body centered (256,290), about 230 wide; dark outline on main shapes; brown stem and green leaf on top; white highlight on upper left; soft shadow under apple -->
+<rect width="512" height="512" fill="#dff1fb"/>
+<rect y="380" width="512" height="132" fill="#d9b48a" stroke="#3b2f2f" stroke-width="5"/>
+<ellipse cx="256" cy="398" rx="125" ry="18" fill="#b98f62"/>
+<g stroke="#3b2f2f" stroke-width="6" stroke-linejoin="round" stroke-linecap="round">
+<path d="M256 190 C190 150 128 200 140 282 C152 362 212 410 256 394 C300 410 360 362 372 282 C384 200 322 150 256 190 Z" fill="#e8504a"/>
+<path d="M256 192 C258 160 262 140 274 122" fill="none"/>
+<path d="M270 152 C300 118 342 122 354 140 C332 166 296 172 270 152 Z" fill="#6cbf5a"/>
+</g>
+<ellipse cx="198" cy="248" rx="20" ry="40" fill="#ffffff" opacity="0.6" transform="rotate(-22 198 248)"/>
+</svg>`;
+
 /** 그림 요청 프롬프트 */
 export function illustrationPrompt(description: string): string {
   return [
-    'You are an illustrator who draws with SVG code.',
-    `Draw this as a flat vector illustration: ${description.trim()}`,
+    'You are a skilled illustrator who draws cute, clean flat vector illustrations as SVG code.',
+    `Subject to draw (may be in Korean): ${description.trim()}`,
     '',
-    'Output ONLY one SVG document. No explanation, no markdown fences.',
-    'Rules:',
-    '- Start with <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">.',
-    '- First element: a full-size background <rect> in a soft color.',
-    '- Flat illustration style: soft harmonious colors, simple clean shapes, a clear main subject in the center.',
-    '- Use rect, circle, ellipse, polygon and path (simple curves). Group parts of the same object with <g>.',
-    '- 15 to 45 elements in total. Keep it compact.',
-    '- No text, no <image>, no scripts, no external links, no filters.',
+    'Here is an example of the expected style and structure (a different subject):',
+    EXAMPLE_SVG,
+    '',
+    'Now draw the requested subject in the same style. Rules:',
+    '1. Output ONLY one SVG document: no explanation, no markdown fences.',
+    '2. Start with <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">, then a <!-- plan: ... --> comment that lists EVERY part of the subject with its shape, color and approximate x,y position and size. Then draw following that plan exactly.',
+    '3. Background: a full-size <rect> in a soft pale color, plus a simple ground or decoration (hill, floor, clouds, stars) if it fits.',
+    '4. The main subject is centered and fills about 60% of the canvas. Its colors must contrast clearly with the background.',
+    '5. Draw from back to front. Parts must overlap and connect naturally (e.g. the head sits on the body, ears attach to the top of the head).',
+    '6. Put the main shapes in a <g stroke="#3b2f2f" stroke-width="5" stroke-linejoin="round" stroke-linecap="round"> so they get a dark outline.',
+    '7. Animals and characters: big round head, two ears, two eyes (white circle + dark pupil + tiny white highlight), nose, a smiling mouth (curved path), cheeks, body, legs or paws, tail. Recognizable features matter most (cat: pointed triangle ears + whiskers; dog: floppy ears; rabbit: long ears; bird: beak + wings).',
+    '8. Objects and scenes: show the 3 to 6 most recognizable parts, add one highlight and one shadow.',
+    '9. Use a palette of 4 to 7 colors. 20 to 50 elements. No text, no <image>, no scripts, no filters.',
   ].join('\n');
 }

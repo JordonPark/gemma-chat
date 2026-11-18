@@ -246,8 +246,8 @@ export async function generateIllustration(
     {
       messages: [{ role: 'user', content: illustrationPrompt(description) }],
       jinja: true,
-      n_predict: 2000,
-      temperature: 0.7,
+      n_predict: 2600,
+      temperature: 0.55, // 낮을수록 계획대로 차분하게 그린다
       top_k: 64,
       top_p: 0.95,
       stop: [...STOP_WORDS, '</svg>'],
