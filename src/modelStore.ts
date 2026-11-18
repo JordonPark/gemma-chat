@@ -32,7 +32,12 @@ export type ImportStage =
   | 'verifying'
   | 'preparing'
   | 'done';
-export type ImportProgress = { stage: ImportStage; ratio: number; detail?: string };
+export type ImportProgress = {
+  stage: ImportStage;
+  ratio: number;
+  detail?: string;
+  transfer?: { received: number; total: number; secondsLeft?: number };
+};
 export type OnProgress = (p: ImportProgress) => void;
 
 export type InstalledModel = { file: File; path: string; name: string; size: number };

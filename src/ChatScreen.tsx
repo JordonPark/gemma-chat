@@ -3,6 +3,7 @@ import {
   Alert,
   FlatList,
   Image,
+  Keyboard,
   KeyboardAvoidingView,
   Modal,
   Platform,
@@ -14,6 +15,8 @@ import {
   TextInput,
   useWindowDimensions,
   View,
+  type ImageStyle,
+  type StyleProp,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { activateKeepAwakeAsync, deactivateKeepAwake } from 'expo-keep-awake';
@@ -45,6 +48,7 @@ import {
   type DrawStyle,
   type ImageModelUpdate,
 } from './imageGen';
+import { ImageViewer, type ImagePreview } from './ImageViewer';
 import { describeImageModel, imageModelSizeText, useImageModel, type ImageModelStatus } from './useImageModel';
 import { formatBytes, type InstalledModel } from './modelStore';
 import { Markdown } from './Markdown';
@@ -56,7 +60,7 @@ import { describeVision, useVision, type VisionStatus } from './useVision';
 import { deleteImages, pickImage, type ImageSource } from './vision';
 import { isOcrAvailable, recognizeText } from '../modules/expo-ocr';
 import { clearTempFiles, storageBreakdown } from './storageInfo';
-import { DownloadCancelled, checkSmallerModel, downloadModel, type ModelUpgrade } from './modelDownload';
+import { DownloadCancelled, checkSmallerModel, downloadModel, formatDownloadEta, type ModelUpgrade } from './modelDownload';
 import type { ImportProgress } from './modelStore';
 
 const uid = () => `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
@@ -65,6 +69,7 @@ type Props = {
   model: InstalledModel;
   settings: Settings;
   gpuInfo: string;
+  initialInput?: string;
   onChangeSettings: (s: Settings) => void;
   onRemoveModel: () => void;
   /** 더 작은 모델로 교체가 끝나면 새 모델을 불러온다 */
@@ -90,13 +95,14 @@ function referencedPhoto(request: string, msgs: ChatMessage[]): string | undefin
   return undefined;
 }
 
-export function ChatScreen({ model, settings, gpuInfo, onChangeSettings, onRemoveModel, onModelReplaced }: Props) {
+export function ChatScreen({ model, settings, gpuInfo, initialInput = '', onChangeSettings, onRemoveModel, onModelReplaced }: Props) {
   const { fontScale } = useWindowDimensions();
   const [messages, setMessages] = useState<ChatMessage[]>(() => loadChat());
-  const [input, setInput] = useState('');
+  const [input, setInput] = useState(initialInput);
   const [streaming, setStreaming] = useState<string | null>(null);
   const [stats, setStats] = useState<GenStats | null>(null);
   const [showSettings, setShowSettings] = useState(false);
+  const [preview, setPreview] = useState<ImagePreview | null>(null);
   const [pendingImage, setPendingImage] = useState<string | null>(null);
   /** 첨부한 사진의 OCR 결과. undefined = 읽는 중, null = 실패/불가, string = 결과(빈 문자열이면 글자 없음) */
   const [pendingOcr, setPendingOcr] = useState<string | null | undefined>(null);
@@ -474,7 +480,17 @@ export function ChatScreen({ model, settings, gpuInfo, onChangeSettings, onRemov
         ? [...messages, { id: '__drawing__', role: 'assistant', content: '', svg: drawing.svg ?? '' }]
         : messages;
 
+  const upgradeTransfer = upgradeDl?.progress?.transfer;
+  const upgradeDetail = upgradeDl?.progress?.detail ?? (upgradeTransfer
+    ? `${formatBytes(upgradeTransfer.received)} / ${formatBytes(upgradeTransfer.total)}`
+      + (upgradeTransfer.secondsLeft === undefined ? '' : ` · ${formatDownloadEta(upgradeTransfer.secondsLeft)}`)
+    : '');
+
   const openSettings = () => setShowSettings(true);
+  const openPreview = (media: ImagePreview) => {
+    Keyboard.dismiss();
+    setPreview(media);
+  };
   const draftIllustration = () => {
     if (!input.trim()) setInput('별빛이 비치는 바닷가를 그려줘');
     inputRef.current?.focus();
@@ -582,7 +598,7 @@ export function ChatScreen({ model, settings, gpuInfo, onChangeSettings, onRemov
                 <View style={styles.flex}>
                   <Text style={styles.dlText} numberOfLines={1}>
                     작은 모델 받는 중 {Math.round((upgradeDl.progress?.ratio ?? 0) * 100)}%
-                    {upgradeDl.progress?.detail ? ` · ${upgradeDl.progress.detail}` : ''}
+                    {upgradeDetail ? ` · ${upgradeDetail}` : ''}
                   </Text>
                   <View style={styles.dlTrack}>
                     <View style={[styles.dlFill, { width: `${Math.round((upgradeDl.progress?.ratio ?? 0) * 100)}%` }]} />
@@ -658,7 +674,12 @@ export function ChatScreen({ model, settings, gpuInfo, onChangeSettings, onRemov
                       <Text style={styles.msg}>🎨 그림을 구상하는 중… ({drawing.chars}자)</Text>
                     )
                   ) : item.role === 'assistant' && item.picture ? (
-                    <PictureCard uri={item.picture} size={mediaSize} caption={item.content.replace(/^\[그림: (.*)\]$/, '$1')} />
+                    <PictureCard
+                      uri={item.picture}
+                      size={mediaSize}
+                      caption={item.content.replace(/^\[그림: (.*)\]$/, '$1')}
+                      onOpen={(uri) => openPreview({ uri, title: '생성한 그림' })}
+                    />
                   ) : item.role === 'assistant' && item.choices?.length ? (
                     <View style={{ gap: 10 }}>
                       <Markdown text={item.content} />
@@ -678,13 +699,23 @@ export function ChatScreen({ model, settings, gpuInfo, onChangeSettings, onRemov
                       ) : null}
                     </View>
                   ) : item.role === 'assistant' && item.svg ? (
-                    <SvgCard svg={item.svg} size={mediaSize} caption={item.content.replace(/^\[일러스트: (.*)\]$/, '$1')} />
+                    <SvgCard
+                      svg={item.svg}
+                      size={mediaSize}
+                      caption={item.content.replace(/^\[일러스트: (.*)\]$/, '$1')}
+                      onOpen={(svg) => openPreview({ svg, title: '일러스트' })}
+                    />
                   ) : item.role === 'assistant' ? (
                     <Markdown text={item.content} />
                   ) : (
                     <>
                       {item.image ? (
-                        <Image source={{ uri: item.image }} style={[styles.msgImage, { width: mediaSize, height: mediaSize }]} resizeMode="cover" />
+                        <PhotoThumbnail
+                          uri={item.image}
+                          label="첨부 사진 크게 보기"
+                          style={[styles.msgImage, { width: mediaSize, height: mediaSize }]}
+                          onOpen={(uri) => openPreview({ uri, title: '첨부 사진' })}
+                        />
                       ) : null}
                       <Text selectable style={[styles.msg, styles.userText]}>{item.content}</Text>
                       {item.tool ? <Text style={styles.toolChip}>{item.tool.chip}</Text> : null}
@@ -699,7 +730,12 @@ export function ChatScreen({ model, settings, gpuInfo, onChangeSettings, onRemov
             <View style={styles.composer}>
               {pendingImage ? (
                 <View style={styles.pending}>
-                  <Image source={{ uri: pendingImage }} style={styles.pendingImage} />
+                  <PhotoThumbnail
+                    uri={pendingImage}
+                    label="보내기 전 첨부 사진 크게 보기"
+                    style={styles.pendingImage}
+                    onOpen={(uri) => openPreview({ uri, title: '첨부 사진' })}
+                  />
                   <Text style={styles.pendingText} numberOfLines={2}>
                     {pendingOcr === undefined
                       ? '글자 읽는 중…'
@@ -775,6 +811,8 @@ export function ChatScreen({ model, settings, gpuInfo, onChangeSettings, onRemov
       <SafeAreaView style={styles.flex}>
         <FoldAwareArea>{renderWorkspace}</FoldAwareArea>
       </SafeAreaView>
+
+      {preview ? <ImageViewer media={preview} onClose={() => setPreview(null)} /> : null}
 
       {showSettings ? (
         <SettingsModal
@@ -1139,8 +1177,26 @@ function StorageSection({ visible, busy }: { visible: boolean; busy: boolean }) 
   );
 }
 
+function PhotoThumbnail({ uri, label, style, onOpen }: {
+  uri: string;
+  label: string;
+  style: StyleProp<ImageStyle>;
+  onOpen: (uri: string) => void;
+}) {
+  return (
+    <Pressable accessibilityRole="button" accessibilityLabel={label} onPress={() => onOpen(uri)}>
+      <Image source={{ uri }} style={style} resizeMode="cover" />
+    </Pressable>
+  );
+}
+
 /** 기기에서 생성한 그림 카드: 크게 보기 + 저장·공유 */
-function PictureCard({ uri, size, caption }: { uri: string; size: number; caption?: string }) {
+function PictureCard({ uri, size, caption, onOpen }: {
+  uri: string;
+  size: number;
+  caption?: string;
+  onOpen: (uri: string) => void;
+}) {
   const share = async () => {
     try {
       if (!(await Sharing.isAvailableAsync())) {
@@ -1154,7 +1210,12 @@ function PictureCard({ uri, size, caption }: { uri: string; size: number; captio
   };
   return (
     <View style={{ gap: 8 }}>
-      <Image source={{ uri }} style={[styles.picture, { width: size, height: size }]} resizeMode="cover" />
+      <PhotoThumbnail
+        uri={uri}
+        label="생성한 그림 크게 보기"
+        style={[styles.picture, { width: size, height: size }]}
+        onOpen={onOpen}
+      />
       {caption ? <Text style={styles.hint}>{caption}</Text> : null}
       <Pressable onPress={share} style={[styles.hBtn, { alignSelf: 'flex-start', minHeight: 44 }]}>
         <Text style={styles.hBtnText}>저장 · 공유</Text>

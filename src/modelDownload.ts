@@ -99,26 +99,32 @@ export async function fetchManifest(signal?: AbortSignal): Promise<Manifest> {
   return m;
 }
 
-/**
- * 다운로드 속도·남은 시간 표시용. "최근 5초 동안 받은 양"으로 계산해 검사·이어 붙이기 시간이 섞이지 않게 한다.
- * 반환 함수에 지금까지 받은 바이트를 넣으면 " · 12 MB/s · 약 3분 남음" 같은 문자열을 준다.
- */
-export function speedMeter(total?: number) {
+/** 최근 전송량으로 초당 바이트를 구한다. 재시도나 전송량 감소 시 샘플을 다시 모은다. */
+function measureSpeed() {
   let samples: { t: number; bytes: number }[] = [];
-  return (done: number, totalBytes = total) => {
+  return (done: number, reset = false) => {
     const now = Date.now();
+    if (reset || done < (samples.at(-1)?.bytes ?? 0)) samples = [];
     samples.push({ t: now, bytes: done });
     while (samples.length > 2 && now - samples[0].t > 5000) samples.shift();
     const first = samples[0];
-    if (done < first.bytes) samples = [{ t: now, bytes: done }];
     const secs = (now - first.t) / 1000;
-    if (secs < 1.5) return '';
-    const speed = (done - first.bytes) / secs;
-    if (speed <= 0) return '';
+    return secs >= 1.5 && done > first.bytes ? (done - first.bytes) / secs : 0;
+  };
+}
+
+export function formatDownloadEta(seconds: number) {
+  return seconds >= 60 ? `약 ${Math.round(seconds / 60)}분 남음` : `약 ${seconds}초 남음`;
+}
+
+export function speedMeter(total?: number) {
+  const measure = measureSpeed();
+  return (done: number, totalBytes = total) => {
+    const speed = measure(done);
+    if (!speed) return '';
     let out = ` · ${formatBytes(speed)}/s`;
     if (totalBytes) {
-      const left = Math.round((totalBytes - done) / speed);
-      out += ` · 약 ${left >= 60 ? `${Math.round(left / 60)}분` : `${left}초`} 남음`;
+      out += ` · ${formatDownloadEta(Math.max(0, Math.round((totalBytes - done) / speed)))}`;
     }
     return out;
   };
@@ -152,7 +158,7 @@ export async function downloadModel(onProgress: OnProgress, signal: AbortSignal)
     throw new Error(`저장 공간 부족: 약 ${formatBytes(need)} 필요, 남은 공간 ${formatBytes(free)}`);
   }
 
-  const speed = speedMeter(m.size);
+  const measure = measureSpeed();
   let lastEmit = 0;
   try {
     await downloadRanged(
@@ -161,13 +167,18 @@ export async function downloadModel(onProgress: OnProgress, signal: AbortSignal)
       new File(dir, '.chunk'),
       (done, total, note) => {
         const now = Date.now();
-        const s = speed(done);
+        const speed = measure(done, !!note);
         if (!note && now - lastEmit < 250 && done < total) return;
         lastEmit = now;
         onProgress({
           stage: 'downloading',
           ratio: total ? done / total : 0,
-          detail: note ?? `${formatBytes(done)} / ${formatBytes(total)}${s}`,
+          detail: note,
+          transfer: {
+            received: done,
+            total,
+            secondsLeft: speed && done < total ? Math.ceil((total - done) / speed) : undefined,
+          },
         });
         if (done > 0) writeState({ sha256: m.sha256, done: 1 });
       },
@@ -178,7 +189,7 @@ export async function downloadModel(onProgress: OnProgress, signal: AbortSignal)
     throw new Error(`모델 다운로드 실패: ${e?.message ?? e}\nWi-Fi 연결을 확인하고 다시 시도하세요. 받은 곳부터 이어 받습니다.`);
   }
 
-  onProgress({ stage: 'verifying', ratio: 1, detail: '전체 SHA-256 검사 중 (1분 정도)' });
+  onProgress({ stage: 'verifying', ratio: 1, detail: '다운로드를 마쳤어요. 모델 파일을 확인하고 있습니다.' });
   const hash = (await joined.digest('SHA-256')).toLowerCase();
   if (joined.size !== m.size || hash !== m.sha256.toLowerCase() || !isGguf(await readMagic(joined))) {
     for (const e of dir.list()) e.delete();

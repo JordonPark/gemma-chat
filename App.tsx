@@ -16,7 +16,7 @@ type Phase =
   | { kind: 'scanning' }
   | { kind: 'setup' }
   | { kind: 'loading'; model: InstalledModel; pct: number }
-  | { kind: 'ready'; model: InstalledModel; gpuInfo: string }
+  | { kind: 'ready'; model: InstalledModel; gpuInfo: string; initialInput: string }
   | { kind: 'error'; model: InstalledModel; message: string };
 
 // 첫 실행 때 로딩 화면을 최소 이만큼은 보여 준다 (모델이 빨리 올라와도 화면이 깜빡이고 지나가지 않게)
@@ -37,14 +37,14 @@ export default function App() {
   }, []);
 
   const startModel = useCallback(
-    async (model: InstalledModel, s: Settings) => {
+    async (model: InstalledModel, s: Settings, initialInput = '') => {
       setPhase({ kind: 'loading', model, pct: 0 });
       try {
         const r = await loadModel(model.path, s, (pct) => setPhase({ kind: 'loading', model, pct }));
         const gpuInfo = r.gpu ? 'GPU' : s.useGpu ? `CPU (GPU 불가: ${r.reasonNoGPU || '미지원'})` : 'CPU';
         setPhase({ kind: 'loading', model, pct: 100 });
         await holdSplash();
-        setPhase({ kind: 'ready', model, gpuInfo });
+        setPhase({ kind: 'ready', model, gpuInfo, initialInput });
       } catch (e: any) {
         firstLaunch.current = false;
         setPhase({ kind: 'error', model, message: String(e?.message ?? e) });
@@ -84,7 +84,7 @@ export default function App() {
       body = <LoadingScreen status="준비 중" />;
       break;
     case 'setup':
-      body = <SetupScreen onInstalled={(m) => startModel(m, settings)} />;
+      body = <SetupScreen onInstalled={(m, initialInput) => startModel(m, settings, initialInput)} />;
       break;
     case 'loading':
       body = (
@@ -124,6 +124,7 @@ export default function App() {
           model={phase.model}
           settings={settings}
           gpuInfo={phase.gpuInfo}
+          initialInput={phase.initialInput}
           onChangeSettings={changeSettings}
           onRemoveModel={removeModel}
           onModelReplaced={(m) => startModel(m, settings)}

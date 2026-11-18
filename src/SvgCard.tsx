@@ -8,9 +8,9 @@ import { captureRef } from 'react-native-view-shot';
 import * as Sharing from 'expo-sharing';
 import { colors } from './theme';
 
-type Props = { svg: string; size?: number; live?: boolean; caption?: string };
+type Props = { svg: string; size?: number; live?: boolean; caption?: string; onOpen?: (svg: string) => void };
 
-export const SvgCard = memo(function SvgCard({ svg, size = 260, live = false, caption }: Props) {
+export const SvgCard = memo(function SvgCard({ svg, size = 260, live = false, caption, onOpen }: Props) {
   const shotRef = useRef<ComponentRef<typeof View>>(null);
   const [broken, setBroken] = useState(false);
 
@@ -27,15 +27,23 @@ export const SvgCard = memo(function SvgCard({ svg, size = 260, live = false, ca
     }
   };
 
+  const canvas = (
+    <View ref={shotRef} collapsable={false} style={[styles.canvas, { width: size, height: size }]}>
+      {broken ? (
+        <Text style={styles.broken}>그림을 표시하지 못했습니다.{'\n'}다시 그려 보세요.</Text>
+      ) : (
+        <SvgXml xml={svg} width="100%" height="100%" onError={() => !live && setBroken(true)} />
+      )}
+    </View>
+  );
+
   return (
     <View style={styles.wrap}>
-      <View ref={shotRef} collapsable={false} style={[styles.canvas, { width: size, height: size }]}>
-        {broken ? (
-          <Text style={styles.broken}>그림을 표시하지 못했습니다.{'\n'}다시 그려 보세요.</Text>
-        ) : (
-          <SvgXml xml={svg} width="100%" height="100%" onError={() => !live && setBroken(true)} />
-        )}
-      </View>
+      {onOpen && !live && !broken ? (
+        <Pressable accessibilityRole="button" accessibilityLabel="일러스트 크게 보기" onPress={() => onOpen(svg)}>
+          {canvas}
+        </Pressable>
+      ) : canvas}
       {caption ? <Text style={styles.caption}>{caption}</Text> : null}
       {!live && !broken ? (
         <Pressable onPress={share} style={styles.btn}>

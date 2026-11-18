@@ -12,7 +12,7 @@ import {
   type ImportProgress,
   type InstalledModel,
 } from './modelStore';
-import { DownloadCancelled, downloadModel, fetchManifest, hasPartialDownload } from './modelDownload';
+import { DownloadCancelled, downloadModel, fetchManifest, formatDownloadEta, hasPartialDownload } from './modelDownload';
 import { downloadVision, fetchVisionManifest, findInstalledVision } from './vision';
 import {
   downloadImageModel,
@@ -21,6 +21,7 @@ import {
   isImageGenAvailable,
   prepareImageModel,
 } from './imageGen';
+import { SetupPreview } from './SetupPreview';
 import { colors } from './theme';
 
 /**
@@ -62,22 +63,28 @@ const STAGE_LABEL: Record<ImportProgress['stage'], string> = {
   joining: '조각 이어 붙이는 중',
   copying: '모델 복사 중',
   unzipping: '압축 해제 중',
-  verifying: '무결성(SHA-256) 검사 중',
+  verifying: '모델 파일 확인 중',
   preparing: '그림 모델 준비 중',
   done: '완료',
 };
 
+type SetupProgress = ImportProgress & { downloadStep?: string };
+
 type Busy = null | 'download' | 'import';
 
-export function SetupScreen({ onInstalled }: { onInstalled: (m: InstalledModel) => void }) {
+export function SetupScreen({ onInstalled }: { onInstalled: (m: InstalledModel, initialInput: string) => void }) {
   const [busy, setBusy] = useState<Busy>(null);
-  const [progress, setProgress] = useState<ImportProgress | null>(null);
+  const [progress, setProgress] = useState<SetupProgress | null>(null);
   const [inbox, setInbox] = useState<File[]>([]);
   const [showManual, setShowManual] = useState(false);
   const [lastError, setLastError] = useState<string | null>(null);
   const [sizeText, setSizeText] = useState(FALLBACK_SIZE);
   const abortRef = useRef<AbortController | null>(null);
   const autoStarted = useRef(false);
+  const initialInput = useRef('');
+  const choosePrompt = useCallback((prompt: string) => {
+    initialInput.current = prompt;
+  }, []);
 
   useEffect(() => {
     fetchSizeText().then((t) => t && setSizeText(t));
@@ -89,14 +96,15 @@ export function SetupScreen({ onInstalled }: { onInstalled: (m: InstalledModel) 
   useEffect(refreshInbox, [refreshInbox]);
 
   const startDownload = useCallback(async () => {
+    if (abortRef.current) return;
     const ac = new AbortController();
     abortRef.current = ac;
     setBusy('download');
     setLastError(null);
-    await activateKeepAwakeAsync('download'); // 다운로드 중 화면 꺼짐(→ 앱 일시정지) 방지
     try {
+      await activateKeepAwakeAsync('download');
       const step = (n: number, what: string) => (p: ImportProgress) =>
-        setProgress({ ...p, detail: `${n}/${STEPS} ${what} · ${p.detail ?? ''}` });
+        setProgress({ ...p, downloadStep: `${n}/${STEPS} ${what}` });
       const m = await downloadModel(step(1, '채팅 모델'), ac.signal);
 
       // 사진 인식·그림 모델도 이어서 받는다. 실패해도 채팅은 바로 시작하고, 나머지는 쓸 때 다시 받는다
@@ -111,7 +119,7 @@ export function SetupScreen({ onInstalled }: { onInstalled: (m: InstalledModel) 
       if (WITH_IMAGE_MODEL && !ac.signal.aborted && !findInstalledImageModel()) {
         try {
           await downloadImageModel(step(3, '그림 모델'), ac.signal);
-          setProgress({ stage: 'preparing', ratio: 1, detail: `${STEPS}/${STEPS} 이 기기에서 한 번만, 1~3분 걸립니다` });
+          step(3, '그림 모델')({ stage: 'preparing', ratio: 1, detail: '이 기기에서 한 번만 준비합니다. 약 1~3분 걸려요.' });
           await prepareImageModel();
         } catch (e: any) {
           if (!(e instanceof DownloadCancelled) && !ac.signal.aborted) failed.push(`그림 모델: ${e?.message ?? e}`);
@@ -120,7 +128,7 @@ export function SetupScreen({ onInstalled }: { onInstalled: (m: InstalledModel) 
       if (failed.length) {
         Alert.alert('일부는 나중에 받을 수 있어요', `채팅은 바로 시작합니다. 아래 항목은 처음 쓸 때 다시 받습니다.\n\n${failed.join('\n\n')}`);
       }
-      onInstalled(m);
+      onInstalled(m, initialInput.current);
     } catch (e: any) {
       if (!(e instanceof DownloadCancelled)) {
         const msg = String(e?.message ?? e);
@@ -170,7 +178,7 @@ export function SetupScreen({ onInstalled }: { onInstalled: (m: InstalledModel) 
     await activateKeepAwakeAsync('import'); // 수 GB 작업 중 화면 꺼짐 방지
     try {
       const m = await installFromFiles(files, setProgress, { consumeSources });
-      onInstalled(m);
+      onInstalled(m, initialInput.current);
     } catch (e: any) {
       Alert.alert('모델 설치 실패', String(e?.message ?? e));
     } finally {
@@ -193,7 +201,11 @@ export function SetupScreen({ onInstalled }: { onInstalled: (m: InstalledModel) 
     }
   };
 
-  const pct = Math.round((progress?.ratio ?? 0) * 100);
+  const pct = Math.floor(Math.min(1, Math.max(0, progress?.ratio ?? 0)) * 100);
+  const transfer = progress?.transfer;
+  const determinate = progress?.stage === 'downloading' || progress?.stage === 'joining' || progress?.stage === 'unzipping';
+  const canCancel = busy === 'download' && progress?.stage !== 'verifying'
+    && progress?.stage !== 'preparing' && progress?.stage !== 'done';
 
   return (
     <ScrollView contentContainerStyle={styles.wrap}>
@@ -207,24 +219,49 @@ export function SetupScreen({ onInstalled }: { onInstalled: (m: InstalledModel) 
 
       {busy ? (
         <View style={styles.card}>
-          <ActivityIndicator color={colors.accent} />
-          <Text style={styles.p}>
-            {progress ? STAGE_LABEL[progress.stage] : '준비 중'} {progress ? `${pct}%` : ''}
-          </Text>
-          {progress?.detail ? <Text style={styles.muted}>{progress.detail}</Text> : null}
-          <View style={styles.bar}>
-            <View style={[styles.barFill, { width: `${pct}%` }]} />
+          {progress?.downloadStep ? <Text style={styles.muted}>{progress.downloadStep}</Text> : null}
+          <View style={styles.progressHeading}>
+            <Text accessibilityRole="header" style={styles.progressTitle}>
+              {progress ? STAGE_LABEL[progress.stage] : '준비 중'}
+            </Text>
+            {determinate ? (
+              <Text style={styles.percent} accessible={false}>{pct}%</Text>
+            ) : (
+              <ActivityIndicator color={colors.accent} />
+            )}
           </View>
-          <Text style={styles.muted}>
-            {busy === 'download'
-              ? '앱을 켜 둔 채로 기다려 주세요. 앱을 나가면 다운로드가 멈추고, 다시 열면 이어서 받습니다.'
-              : '앱을 닫지 마세요. 수 분 걸릴 수 있습니다.'}
-          </Text>
-          {busy === 'download' && (
-            <Pressable style={styles.link} onPress={() => abortRef.current?.abort()}>
-              <Text style={[styles.linkText, { color: colors.danger }]}>다운로드 취소</Text>
-            </Pressable>
-          )}
+          {determinate ? (
+            <View
+              accessible
+              accessibilityRole="progressbar"
+              accessibilityLabel={STAGE_LABEL[progress.stage]}
+              accessibilityValue={{ min: 0, now: pct, max: 100 }}
+              style={styles.bar}
+            >
+              <View style={[styles.barFill, { width: `${pct}%` }]} />
+            </View>
+          ) : null}
+          {transfer ? (
+            <View style={styles.transfer}>
+              <Text style={styles.muted}>{formatBytes(transfer.received)} / {formatBytes(transfer.total)}</Text>
+              {transfer.secondsLeft !== undefined || (!progress.detail && transfer.received < transfer.total) ? (
+                <Text style={styles.eta}>
+                  {transfer.secondsLeft === undefined ? '남은 시간 계산 중' : formatDownloadEta(transfer.secondsLeft)}
+                </Text>
+              ) : null}
+            </View>
+          ) : null}
+          {progress?.detail ? <Text style={styles.muted}>{progress.detail}</Text> : null}
+          {canCancel ? (
+            <>
+              <Text style={styles.muted}>앱을 나가면 다운로드가 멈춰요. 돌아오면 이어서 받을 수 있습니다.</Text>
+              <Pressable accessibilityRole="button" style={styles.link} onPress={() => abortRef.current?.abort()}>
+                <Text style={[styles.linkText, { color: colors.danger }]}>다운로드 중단</Text>
+              </Pressable>
+            </>
+          ) : busy === 'import' ? (
+            <Text style={styles.muted}>앱을 닫지 마세요. 수 분 걸릴 수 있습니다.</Text>
+          ) : null}
         </View>
       ) : (
         <View style={styles.card}>
@@ -239,6 +276,8 @@ export function SetupScreen({ onInstalled }: { onInstalled: (m: InstalledModel) 
           </Pressable>
         </View>
       )}
+
+      <SetupPreview onChoosePrompt={choosePrompt} />
 
       <Pressable style={styles.link} onPress={() => setShowManual((v) => !v)} disabled={!!busy}>
         <Text style={styles.linkText}>{showManual ? '▾' : '▸'} 인터넷 없이 파일로 직접 설치</Text>
@@ -306,8 +345,13 @@ const styles = StyleSheet.create({
   btn: { backgroundColor: colors.accent, borderRadius: 14, paddingVertical: 14, alignItems: 'center' },
   btnOff: { opacity: 0.5 },
   btnText: { color: '#fff', fontSize: 15, fontWeight: '600' },
-  link: { alignSelf: 'flex-start', paddingVertical: 4 },
+  link: { alignSelf: 'flex-start', minHeight: 44, justifyContent: 'center' },
   linkText: { color: colors.accentText, fontSize: 14 },
-  bar: { height: 6, borderRadius: 3, backgroundColor: colors.border, overflow: 'hidden' },
-  barFill: { height: 6, backgroundColor: colors.accent },
+  progressHeading: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: 10 },
+  progressTitle: { flex: 1, color: colors.text, fontSize: 18, fontWeight: '800' },
+  percent: { color: colors.accentText, fontSize: 22, fontWeight: '800', fontVariant: ['tabular-nums'] },
+  transfer: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between', gap: 6 },
+  eta: { color: colors.accentText, fontSize: 14, fontWeight: '700' },
+  bar: { height: 8, borderRadius: 4, backgroundColor: colors.border, overflow: 'hidden' },
+  barFill: { height: 8, backgroundColor: colors.accent },
 });
