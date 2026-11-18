@@ -17,6 +17,7 @@ import {
 } from './contentSafety';
 import { UNIT_IDS, contextForPrompt, todayLine, type ToolCall } from './tools';
 import { LANGUAGE_GUIDE, LANGUAGE_REMINDER, needsKoreanRetry } from './languagePolicy';
+import type { PhotoAnnotations } from './photoAnnotate';
 
 export type Role = 'user' | 'assistant';
 /**
@@ -42,6 +43,8 @@ export type ChatMessage = {
   tool?: { note: string; chip: string };
   /** 안전 검사에서 막힌 요청 (사용자 메시지에만). 이후 검사·대화 기록에 내용을 넘기지 않는다 */
   blocked?: boolean;
+  /** 사진 위에 표시할 글자 위치·번역, 물건 위치·이름 (사용자 메시지의 사진에만) */
+  annot?: PhotoAnnotations;
 };
 
 const OCR_MAX_CHARS = 2000;
@@ -443,5 +446,60 @@ export async function pickTool(text: string, prev: ChatMessage[]): Promise<ToolC
     return call?.tool && call.tool !== 'none' ? call : null;
   } catch {
     return null;
+  }
+}
+
+// ───────────────────────── 사진 속 외국어 줄 번역 (사진 위에 덮어 보여 주기용)
+
+/**
+ * 사진에서 읽은 외국어 줄들을 한국어로 번역한다. 줄 수와 순서를 그대로 지킨다 (JSON 스키마로 강제).
+ * 결과도 안전 검사를 거친다.
+ */
+export async function translateLines(lines: string[]): Promise<string[]> {
+  const c = ctx;
+  if (!c || !lines.length) return [];
+  const items = lines.slice(0, 40).map((t) => t.slice(0, 200));
+  await c.clearCache(false);
+  try {
+    const res = await c.completion({
+      messages: [
+        {
+          role: 'user',
+          content: [
+            'Translate each line of text found in a photo into natural, short Korean (한국어).',
+            'Keep the same number of lines and the same order. Keep numbers, prices, units, brand names and codes as they are.',
+            'Signs, menus and labels: translate them the way a Korean sign or menu would read.',
+            '',
+            JSON.stringify(items),
+          ].join('\n'),
+        },
+      ],
+      jinja: true,
+      n_predict: Math.min(1200, 40 + items.length * 40),
+      temperature: 0.2,
+      stop: STOP_WORDS,
+      response_format: {
+        type: 'json_schema',
+        json_schema: {
+          strict: true,
+          schema: {
+            type: 'object',
+            properties: {
+              ko: { type: 'array', items: { type: 'string' }, minItems: items.length, maxItems: items.length },
+            },
+            required: ['ko'],
+            additionalProperties: false,
+          },
+        },
+      },
+    });
+    const raw = stripStop(res.content || res.text || '');
+    const ko = JSON.parse(raw.slice(raw.indexOf('{'), raw.lastIndexOf('}') + 1))?.ko;
+    if (!Array.isArray(ko)) return [];
+    const out = ko.map((t: unknown) => String(t ?? '').trim());
+    await checkGeneratedContent(out.join('\n'), 'assistant reply');
+    return out;
+  } finally {
+    await c.clearCache(false);
   }
 }

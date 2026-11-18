@@ -126,6 +126,9 @@ Gemma 3 4B는 이미지를 이해하는 모델입니다. 비전 프로젝터(`mm
   - iOS: Apple **VisionKit** `DataScannerViewController` (iOS 16+, A12 칩 이상)
   - Android: **CameraX** 미리보기 + ML Kit 한국어 인식
   - 사진 촬영 자체의 셔터 소리는 국내 기준(몰래 촬영 방지)에 따른 것이라 끄지 않습니다.
+- **사진 위 표시 (번역·물건 이름):** 사진을 보내면 사진 위에
+  - 외국어 글자 자리에 **한국어 번역**을 덮어 보여 줍니다(구글 렌즈처럼). 답이 끝난 뒤 Gemma가 줄 단위로 번역하고, '원문 보기'로 바꿀 수 있습니다.
+  - 찾은 **물건에 네모 상자와 한국어 이름**을 붙입니다. 기기 안 물체 인식 MediaPipe **EfficientDet-Lite0**(일상 물건 80종, 4.6MB, Apache-2.0)을 앱에 넣었습니다(`modules/expo-ocr/ios/models`, Android는 같은 파일을 assets로 씀). 이 기능이 없는 예전 빌드에서는 글자 위치만 표시합니다.
 - 코드는 `modules/expo-ocr`에 있는 로컬 Expo 모듈입니다.
 
 ## 2-2. 그림 그리기 (뺐음)

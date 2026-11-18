@@ -1,5 +1,7 @@
 import ExpoModulesCore
 import ImageIO
+import UIKit
+import MediaPipeTasksVision
 import Vision
 import VisionKit
 
@@ -7,6 +9,17 @@ import VisionKit
 public final class ExpoOcrModule: Module {
   public func definition() -> ModuleDefinition {
     Name("ExpoOcr")
+
+    /// 사진 속 물건(일상 물건 80종) 위치·이름 (MediaPipe EfficientDet-Lite0, 앱에 포함된 4.6MB 모델, 기기 안에서만)
+    AsyncFunction("detectObjects") { (uri: String, promise: Promise) in
+      ExpoOcrModule.detectQueue.async {
+        do {
+          promise.resolve(try ExpoOcrModule.detect(uri: uri))
+        } catch {
+          promise.reject("ERR_DETECT", error.localizedDescription)
+        }
+      }
+    }
 
     AsyncFunction("recognizeText") { (uri: String, promise: Promise) in
       DispatchQueue.global(qos: .userInitiated).async {
@@ -54,6 +67,62 @@ public final class ExpoOcrModule: Module {
     let vc = TextScanController(languages: languages)
     vc.onFinish = { text in promise.resolve(text) }
     presenter.present(vc, animated: true)
+  }
+
+  // MARK: - 물체 인식
+
+  private static let detectQueue = DispatchQueue(label: "expo.ocr.detect", qos: .userInitiated)
+  /// detectQueue 에서만 만들고 쓴다
+  nonisolated(unsafe) private static var detector: ObjectDetector?
+
+  private static func modelPath() -> String? {
+    let candidates = [Bundle.main, Bundle(for: ExpoOcrModule.self)]
+    for b in candidates {
+      if let url = b.url(forResource: "ExpoOcrModels", withExtension: "bundle"),
+         let bundle = Bundle(url: url),
+         let p = bundle.path(forResource: "efficientdet_lite0", ofType: "tflite") {
+        return p
+      }
+      if let p = b.path(forResource: "efficientdet_lite0", ofType: "tflite") { return p }
+    }
+    return nil
+  }
+
+  private static func objectDetector() throws -> ObjectDetector {
+    if let d = detector { return d }
+    guard let path = modelPath() else { throw OcrError(message: "물체 인식 모델 파일을 찾을 수 없습니다.") }
+    let options = ObjectDetectorOptions()
+    options.baseOptions.modelAssetPath = path
+    options.runningMode = .image
+    options.maxResults = 8
+    options.scoreThreshold = 0.35
+    let d = try ObjectDetector(options: options)
+    detector = d
+    return d
+  }
+
+  private static func detect(uri: String) throws -> [[String: Any]] {
+    let url: URL
+    if let u = URL(string: uri), u.scheme != nil { url = u } else { url = URL(fileURLWithPath: uri) }
+    guard let image = UIImage(contentsOfFile: url.path), let cg = image.cgImage else {
+      throw OcrError(message: "이미지를 열 수 없습니다: \(uri)")
+    }
+    let result = try objectDetector().detect(image: try MPImage(uiImage: image))
+    let w = Double(cg.width), h = Double(cg.height)
+    return result.detections.compactMap { d in
+      guard let c = d.categories.first, let name = c.categoryName, !name.isEmpty else { return nil }
+      let b = d.boundingBox
+      return [
+        "label": name,
+        "score": Double(c.score),
+        "box": [
+          "x": max(0, Double(b.origin.x) / w),
+          "y": max(0, Double(b.origin.y) / h),
+          "width": min(1, Double(b.size.width) / w),
+          "height": min(1, Double(b.size.height) / h),
+        ],
+      ]
+    }
   }
 
   private struct OcrError: LocalizedError {

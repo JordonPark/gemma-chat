@@ -12,6 +12,12 @@ android {
     versionCode 1
     versionName "1.0.0"
   }
+  // 물체 인식 모델은 iOS 와 같은 파일을 쓴다 (modules/expo-ocr/ios/models)
+  sourceSets {
+    main {
+      assets.srcDirs += ['../ios/models']
+    }
+  }
 }
 
 dependencies {
@@ -22,4 +28,6 @@ dependencies {
   implementation "androidx.camera:camera-camera2:${camerax}"
   implementation "androidx.camera:camera-lifecycle:${camerax}"
   implementation "androidx.camera:camera-view:${camerax}"
+  // 사진 속 물건 위치 찾기 (MediaPipe 물체 인식, 기기 안에서만)
+  implementation 'com.google.mediapipe:tasks-vision:0.10.+'
 }

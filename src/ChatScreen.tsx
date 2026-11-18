@@ -25,6 +25,7 @@ import {
   checkGeneratedContent,
   generateReply,
   pickTool,
+  translateLines,
   resetConversationCache,
   stopGeneration,
   type ChatMessage,
@@ -36,6 +37,8 @@ import { ChatLibrary, type ChatScope } from './ChatLibrary';
 import { conversationName, hasConversationContent, makeConversation, removeTask, type ChatLibraryData, type ChatTask, type Conversation } from './conversationLibrary';
 import { DuoToolbar, hasDuoToolbar } from './DuoToolbar';
 import { FoldAwareArea } from './FoldAwareArea';
+import { AnnotatedPhoto } from './AnnotatedPhoto';
+import { analyzePhoto, needsTranslation, type PhotoAnalysis, type PhotoAnnotations } from './photoAnnotate';
 import { clearMemories, loadMemories, mightNeedTool, removeMemory, runTool } from './tools';
 import { getChatLayout, getFoldInsets, minInlineComposerWidth, type Division } from './foldLayout';
 import { deletePictures } from './legacyDrawing';
@@ -173,6 +176,15 @@ export function ChatScreen({ model, settings, gpuInfo, initialInput = '', onChan
   const readOcr = (uri: string) => isOcrAvailable() ? recognizeText(uri).then((r) => r.text).catch(() => null) : Promise.resolve(null);
 
   /** 사진을 고르면 바로 OCR 을 돌려 둔다 (보통 1초 안팎) */
+  /** 사진 분석(글자 위치 + 물건 위치). 사진마다 한 번만 돌리고 결과를 재사용한다 */
+  const annotJob = useRef<{ uri: string; job: Promise<PhotoAnalysis> } | null>(null);
+  const analysisFor = (uri: string) => {
+    if (annotJob.current?.uri !== uri) annotJob.current = { uri, job: analyzePhoto(uri) };
+    return annotJob.current.job;
+  };
+  const [translatingId, setTranslatingId] = useState<string | null>(null);
+
+  /** 사진을 고르면 바로 OCR·물건 찾기를 돌려 둔다 (보통 1~2초) */
   const startOcr = (uri: string) => {
     if (!isOcrAvailable()) {
       setPendingOcr(null);
@@ -180,11 +192,36 @@ export function ChatScreen({ model, settings, gpuInfo, initialInput = '', onChan
       return;
     }
     setPendingOcr(undefined);
-    const job = readOcr(uri);
+    const job = analysisFor(uri).then((a) => a.text);
     ocrJob.current = job;
     job.then((t) => {
       if (ocrJob.current === job) setPendingOcr(t);
     });
+  };
+
+  /** 사진 속 외국어 줄을 한국어로 번역해 사진 위에 덮어 보여 준다 (답이 끝난 뒤, 모델이 쉬고 있을 때) */
+  const translatePhoto = async (msgId: string, annot: PhotoAnnotations) => {
+    const idx = annot.lines.map((l, i) => (needsTranslation(l.text) ? i : -1)).filter((i) => i >= 0);
+    if (!idx.length || workPending.current) return;
+    workPending.current = true;
+    setTranslatingId(msgId);
+    try {
+      const ko = await translateLines(idx.map((i) => annot.lines[i].text));
+      if (ko.length === idx.length) {
+        const translations: (string | null)[] = annot.lines.map(() => null);
+        idx.forEach((li, k) => {
+          translations[li] = ko[k] || null;
+        });
+        setMessages((prev) =>
+          prev.map((m) => (m.id === msgId && m.annot ? { ...m, annot: { ...m.annot, translations } } : m)),
+        );
+      }
+    } catch (e) {
+      console.warn('photo translation failed', e); // 번역이 안 되면 원문 위치만 보여 준다
+    } finally {
+      workPending.current = false;
+      setTranslatingId(null);
+    }
   };
 
   const attach = async () => {
@@ -262,11 +299,13 @@ export function ChatScreen({ model, settings, gpuInfo, initialInput = '', onChan
     setWorkingWithPhoto(true);
     const image = pendingImage;
     const text = await (ocrJob.current ?? readOcr(image));
+    const annot = (await analysisFor(image).catch(() => null))?.annot ?? null;
+    const readId = uid();
     clearPending();
     followLatest.current = true;
     setMessages((prev) => [
       ...prev,
-      { id: uid(), role: 'user', content: '📝 사진 속 글자 읽기', image, ...(text ? { ocr: text } : {}) },
+      { id: readId, role: 'user', content: '📝 사진 속 글자 읽기', image, ...(text ? { ocr: text } : {}), ...(annot ? { annot } : {}) },
       {
         id: uid(),
         role: 'assistant',
@@ -281,6 +320,7 @@ export function ChatScreen({ model, settings, gpuInfo, initialInput = '', onChan
     ]);
     workPending.current = false;
     setWorkingWithPhoto(false);
+    if (annot) translatePhoto(readId, annot);
   };
 
   const send = async () => {
@@ -315,11 +355,14 @@ export function ChatScreen({ model, settings, gpuInfo, initialInput = '', onChan
     };
     workPending.current = true;
     let keptAwake = false;
+    let answered = false;
     try {
       if (pendingImage) {
         setWorkingWithPhoto(true);
         const ocr = await (ocrJob.current ?? readOcr(pendingImage));
         if (ocr) userMsg.ocr = ocr;
+        const annot = (await analysisFor(pendingImage).catch(() => null))?.annot;
+        if (annot) userMsg.annot = annot;
         if (vision.status.kind !== 'ready' && !ocr && !vision.ensureReady()) return;
         setWorkingWithPhoto(false);
       }
@@ -359,6 +402,7 @@ export function ChatScreen({ model, settings, gpuInfo, initialInput = '', onChan
       const { text: reply, stats: st } = await generateReply(history, settings);
       setMessages((prev) => [...prev, { id: uid(), role: 'assistant', content: reply || '(빈 응답)' }]);
       setStats(st);
+      answered = true;
     } catch (e: any) {
       if (e instanceof ContentSafetyError) {
         if (e.category !== 'self_harm') recordStrike(); // 자해 신호는 도움 안내만 하고 벌점은 주지 않는다
@@ -376,6 +420,8 @@ export function ChatScreen({ model, settings, gpuInfo, initialInput = '', onChan
       setWorkingWithPhoto(false);
       setStreaming(null);
     }
+    // 사진에 외국어 글자가 있으면 답이 끝난 뒤 번역해 사진 위에 보여 준다
+    if (answered && userMsg.annot) translatePhoto(userMsg.id, userMsg.annot);
   };
 
   const restoreConversation = (target: Conversation) => {
@@ -625,7 +671,15 @@ export function ChatScreen({ model, settings, gpuInfo, initialInput = '', onChan
                     <Markdown text={item.content} />
                   ) : (
                     <>
-                      {item.image ? (
+                      {item.image && item.annot ? (
+                        <AnnotatedPhoto
+                          uri={item.image}
+                          width={mediaSize}
+                          annot={item.annot}
+                          translating={translatingId === item.id}
+                          onOpen={(uri) => openPreview({ uri, title: '첨부 사진' })}
+                        />
+                      ) : item.image ? (
                         <PhotoThumbnail
                           uri={item.image}
                           label="첨부 사진 크게 보기"

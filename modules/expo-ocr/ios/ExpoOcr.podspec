@@ -16,6 +16,9 @@ Pod::Spec.new do |s|
   s.static_framework = true
 
   s.dependency 'ExpoModulesCore'
+  # 사진 속 물건 위치 찾기 (기기 안 물체 인식)
+  s.dependency 'MediaPipeTasksVision', '>= 0.10.21'
+  s.resource_bundles = { 'ExpoOcrModels' => ['models/*.tflite'] }
   s.frameworks = 'Vision', 'ImageIO', 'VisionKit'
 
   s.source_files = "**/*.{h,m,swift}"
