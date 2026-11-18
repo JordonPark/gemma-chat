@@ -81,6 +81,13 @@ const DRAW_INTENT =
 /** 사진 설명이 걸려도 기기 분석 결과조차 보여 주면 안 되는 범주 */
 const SEVERE = new Set(['sexual_minors', 'sexual_explicit', 'violence', 'extremism', 'self_harm']);
 
+/** 설정의 "답변 스타일": temperature (낮을수록 일정하고 정확, 높을수록 다양하고 창의적) */
+const STYLE_PRESETS = [
+  { label: '정확하게', temperature: 0.3, hint: '매번 비슷하고 차분한 답. 사실 확인·계산·공부에 알맞습니다.' },
+  { label: '균형', temperature: 0.7, hint: '정확함과 자연스러움의 중간입니다.' },
+  { label: '창의적으로', temperature: 1.0, hint: '표현이 다양하고 자유로운 답. 글쓰기·아이디어에 알맞습니다 (Gemma 권장 기본값).' },
+] as const;
+
 /** 설정의 "대화 길이": 대화 기억 길이(n_ctx)와 한 번에 답하는 최대 길이를 함께 정한다 */
 const LENGTH_PRESETS = [
   { label: '적게', nCtx: 2048, maxNewTokens: 512, hint: '짧은 대화·짧은 답. 메모리를 가장 적게 쓰고 가장 빠릅니다.' },
@@ -840,7 +847,6 @@ function SettingsModal({
   onSave: (s: Settings) => void;
 }) {
   const [s, setS] = useState(settings);
-  const num = (v: string, d: number) => (Number.isFinite(Number(v)) && v.trim() !== '' ? Number(v) : d);
 
   return (
     <Modal
@@ -900,15 +906,27 @@ function SettingsModal({
             `직접 정한 값: 대화 기억 ${s.nCtx} · 답 최대 ${s.maxNewTokens} 토큰`) + ' 바꾸면 모델을 다시 불러옵니다.'}
         </Text>
 
-        <Text style={styles.label}>temperature</Text>
-        <TextInput
-          style={styles.field}
-          keyboardType="decimal-pad"
-          defaultValue={String(s.temperature)}
-          onEndEditing={(e) =>
-            setS({ ...s, temperature: Math.min(2, Math.max(0, num(e.nativeEvent.text, s.temperature))) })
-          }
-        />
+        <Text style={styles.label}>답변 스타일</Text>
+        <View style={styles.segment}>
+          {STYLE_PRESETS.map((p) => {
+            const on = Math.abs(s.temperature - p.temperature) < 0.05;
+            return (
+              <Pressable
+                key={p.label}
+                accessibilityRole="button"
+                accessibilityState={{ selected: on }}
+                onPress={() => setS({ ...s, temperature: p.temperature })}
+                style={[styles.segmentItem, on && styles.segmentOn]}
+              >
+                <Text style={[styles.segmentText, on && styles.segmentTextOn]}>{p.label}</Text>
+              </Pressable>
+            );
+          })}
+        </View>
+        <Text style={styles.hint}>
+          {STYLE_PRESETS.find((p) => Math.abs(s.temperature - p.temperature) < 0.05)?.hint ??
+            `직접 정한 값 (temperature ${s.temperature}).`}
+        </Text>
 
         <View style={styles.switchRow}>
           <View style={styles.flex}>
