@@ -2,7 +2,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Alert } from 'react-native';
 import { activateKeepAwakeAsync, deactivateKeepAwake } from 'expo-keep-awake';
-import { deleteImageModel, downloadImageModel, findInstalledImageModel, isImageGenAvailable } from './imageGen';
+import { deleteImageModel, downloadImageModel, findInstalledImageModel, isImageGenAvailable, trimImageModel } from './imageGen';
 import { DownloadCancelled } from './modelDownload';
 import type { ImportProgress } from './modelStore';
 
@@ -22,6 +22,9 @@ export function useImageModel() {
 
   const refresh = useCallback(() => {
     if (!isImageGenAvailable()) return setStatus({ kind: 'unsupported' });
+    try {
+      trimImageModel(); // 이미 설치된 모델에서도 안 쓰는 부분 정리
+    } catch {}
     const p = findInstalledImageModel();
     setStatus(p ? { kind: 'ready', path: p } : { kind: 'missing' });
   }, []);
