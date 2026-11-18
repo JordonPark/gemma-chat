@@ -104,7 +104,7 @@ export function useImageModel(onDownloaded?: (path: string) => void) {
     }
     Alert.alert(
       '그림 모델 필요',
-      '그림을 그리려면 그림 모델(약 1.6GB)을 한 번 받아야 합니다. 압축을 풀 때 약 3.3GB 의 여유 공간이 필요합니다. Wi-Fi 에서 받는 것을 권장합니다. 받을까요?',
+      '그림을 그리려면 그림 모델(약 2.7GB)을 한 번 받아야 합니다. 압축을 풀 때 약 5.5GB 의 여유 공간이 필요합니다. Wi-Fi 에서 받는 것을 권장합니다. 받을까요?',
       [
         { text: '취소', style: 'cancel' },
         { text: '받기', onPress: () => download() },
@@ -121,7 +121,7 @@ export function describeImageModel(s: ImageModelStatus): string {
     case 'unsupported':
       return '이 기기에서는 도형 일러스트로 그립니다';
     case 'missing':
-      return '그림 모델 없음 (약 1.6GB)';
+      return '그림 모델 없음 (약 2.7GB)';
     case 'ready':
       return '사용 가능';
     case 'downloading':

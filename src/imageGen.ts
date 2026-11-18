@@ -1,7 +1,7 @@
 /**
  * iPhone 기기 안 그림 생성 (Stable Diffusion 1.5, Apple Core ML, Neural Engine). 그림체는 DRAW_STYLES 에서 고른다.
  *
- * - 모델(약 1.6GB zip)은 처음 그릴 때 GitHub Release(model-v1/sd.json)에서 한 번 받아 기기에서 압축을 푼다.
+ * - 모델(약 2.7GB zip, 2GiB 미만 조각)은 처음 그릴 때 GitHub Release(model-v1/sd.json)에서 한 번 받아 기기에서 압축을 푼다.
  * - 그리는 동안 메모리를 확보하려고 채팅 모델(Gemma)을 잠시 내렸다가 다 그리면 다시 올린다 (호출하는 쪽에서 처리).
  */
 import { Directory, File, Paths } from 'expo-file-system';
@@ -20,7 +20,17 @@ import { RangedCancelled, downloadRanged } from './rangedDownload';
 
 export { cancelImageGen, isImageGenAvailable };
 
-type SdManifest = { format: number; id?: string; name: string; size: number; sha256: string; model?: string };
+type SdManifest = {
+  format: number;
+  id?: string;
+  /** 합친 zip 이름 */
+  name: string;
+  size: number;
+  sha256: string;
+  /** 2GiB 넘는 모델은 조각으로 올린다 (format 2) */
+  parts?: { name: string; size: number }[];
+  model?: string;
+};
 
 const sdDir = () => new Directory(Paths.document, 'sd');
 /** 설치된 그림 모델 정보 (sd.json 의 id/name/model). 표시가 없으면 처음 배포했던 기본 SD 1.5 */
@@ -131,8 +141,11 @@ export async function downloadImageModel(onProgress: OnProgress, signal: AbortSi
 
   const speed = speedMeter(m.size);
   try {
+    const sources = m.parts?.length
+      ? m.parts.map((p) => ({ url: `${MODEL_RELEASE_URL}/${encodeURIComponent(p.name)}`, size: p.size }))
+      : [{ url: `${MODEL_RELEASE_URL}/${encodeURIComponent(m.name)}`, size: m.size }];
     await downloadRanged(
-      [{ url: `${MODEL_RELEASE_URL}/${encodeURIComponent(m.name)}`, size: m.size }],
+      sources,
       zip,
       new File(dir, '.chunk'),
       (done, total, note) =>
