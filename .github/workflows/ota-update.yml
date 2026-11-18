@@ -22,6 +22,7 @@ on:
       - 'index.ts'
       - 'src/**'
       - 'assets/**'
+      - '.github/workflows/ota-update.yml'
 
 concurrency:
   group: ota-update-${{ github.ref }}
@@ -66,3 +67,18 @@ jobs:
         run: |
           MSG="$(git log -1 --format=%s) (${GITHUB_SHA::7})"
           npx --yes eas-cli@latest update --channel production --message "$MSG" --non-interactive
+
+      - name: Verify what installed apps will receive
+        if: steps.cfg.outputs.skip != '1'
+        run: |
+          RV=$(npx --yes expo config --type public --json 2>/dev/null | node -e "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>{const c=JSON.parse(s);const r=c.runtimeVersion;console.log(typeof r==='string'?r:c.version)})")
+          echo "runtimeVersion=$RV"
+          for P in ios android; do
+            OUT=$(curl -sS -m 30 "https://u.expo.dev/${EXPO_PROJECT_ID}" \
+              -H "expo-platform: $P" -H "expo-runtime-version: $RV" -H "expo-channel-name: production" \
+              -H "expo-protocol-version: 1" -H "accept: application/expo+json,application/json" -w '\nHTTP %{http_code}')
+            ID=$(echo "$OUT" | grep -o '"id":"[^"]*"' | head -1)
+            AT=$(echo "$OUT" | grep -o '"createdAt":"[^"]*"' | head -1)
+            CODE=$(echo "$OUT" | tail -1)
+            echo "::notice title=OTA $P runtime $RV::$CODE $ID $AT"
+          done
