@@ -6,6 +6,7 @@ import {
   checkImageModelUpdate,
   deleteImageModel,
   downloadImageModel,
+  fetchSdManifest,
   findInstalledImageModel,
   isImageGenAvailable,
   trimImageModel,
@@ -16,7 +17,7 @@ import type { ImportProgress } from './modelStore';
 
 export type ImageModelStatus =
   | { kind: 'unsupported' } // Android 등: 이미지 생성 모듈 없음 → 도형 일러스트로 대신
-  | { kind: 'missing' }
+  | { kind: 'missing'; size?: number } // size: Release(sd.json)에서 읽은 받을 용량(바이트)
   | { kind: 'ready'; path: string }
   | { kind: 'downloading'; progress: ImportProgress | null };
 
@@ -40,6 +41,19 @@ export function useImageModel(onDownloaded?: (path: string) => void) {
     setStatus(p ? { kind: 'ready', path: p } : { kind: 'missing' });
   }, []);
   useEffect(refresh, [refresh]);
+
+  // 아직 없으면 받을 용량을 Release 에서 읽어 둔다 (모델이 바뀌어도 앱 수정 없이 맞는 용량이 보이도록)
+  const missing = status.kind === 'missing' && status.size == null;
+  useEffect(() => {
+    if (!missing) return;
+    const ac = new AbortController();
+    const timer = setTimeout(() => ac.abort(), 10_000);
+    fetchSdManifest(ac.signal)
+      .then((m) => setStatus((s) => (s.kind === 'missing' ? { kind: 'missing', size: m.size } : s)))
+      .catch(() => {})
+      .finally(() => clearTimeout(timer));
+    return () => ac.abort();
+  }, [missing]);
 
   const download = useCallback(async () => {
     const ac = new AbortController();
@@ -74,7 +88,7 @@ export function useImageModel(onDownloaded?: (path: string) => void) {
     if (!update) return;
     Alert.alert(
       '새 그림 모델로 교체',
-      `${update.model}\n\n지금 그림 모델을 지우고 새 모델(약 ${(update.size / 1e9).toFixed(1)}GB)을 받습니다. ` +
+      `${update.model}\n\n지금 그림 모델을 지우고 새 모델(${imageModelSizeText(update.size)})을 받습니다. ` +
         '압축을 풀 때 그만큼의 여유 공간이 더 필요합니다. Wi-Fi 권장.',
       [
         { text: '취소', style: 'cancel' },
@@ -104,7 +118,7 @@ export function useImageModel(onDownloaded?: (path: string) => void) {
     }
     Alert.alert(
       '그림 모델 필요',
-      '그림을 그리려면 그림 모델(약 2.7GB)을 한 번 받아야 합니다. 압축을 풀 때 약 5.5GB 의 여유 공간이 필요합니다. Wi-Fi 에서 받는 것을 권장합니다. 받을까요?',
+      `그림을 그리려면 그림 모델(${imageModelSizeText(status.size)})을 한 번 받아야 합니다. 압축을 풀 때 그 두 배쯤 여유 공간이 필요합니다. Wi-Fi 에서 받는 것을 권장합니다. 받을까요?`,
       [
         { text: '취소', style: 'cancel' },
         { text: '받기', onPress: () => download() },
@@ -116,12 +130,17 @@ export function useImageModel(onDownloaded?: (path: string) => void) {
   return { status, download, cancelDownload, remove, ensureReady, update, checkUpdate, replace };
 }
 
+/** 그림 모델 용량 글 (모르면 대략값) */
+export function imageModelSizeText(size?: number): string {
+  return size ? `약 ${(size / 1024 ** 3).toFixed(1)}GB` : '약 1~2.5GB';
+}
+
 export function describeImageModel(s: ImageModelStatus): string {
   switch (s.kind) {
     case 'unsupported':
       return '이 기기에서는 도형 일러스트로 그립니다';
     case 'missing':
-      return '그림 모델 없음 (약 2.7GB)';
+      return `그림 모델 없음 (${imageModelSizeText(s.size)})`;
     case 'ready':
       return '사용 가능';
     case 'downloading':

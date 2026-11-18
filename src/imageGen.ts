@@ -1,7 +1,7 @@
 /**
  * iPhone 기기 안 그림 생성 (Stable Diffusion 1.5, Apple Core ML, Neural Engine). 그림체는 DRAW_STYLES 에서 고른다.
  *
- * - 모델(약 2.7GB zip, 2GiB 미만 조각)은 처음 그릴 때 GitHub Release(model-v1/sd.json)에서 한 번 받아 기기에서 압축을 푼다.
+ * - 모델(zip, 2GiB 미만 조각. 용량은 sd.json 기준)은 처음 그릴 때 GitHub Release(model-v1/sd.json)에서 한 번 받아 기기에서 압축을 푼다.
  * - 그리는 동안 메모리를 확보하려고 채팅 모델(Gemma)을 잠시 내렸다가 다 그리면 다시 올린다 (호출하는 쪽에서 처리).
  */
 import { Directory, File, Paths } from 'expo-file-system';
