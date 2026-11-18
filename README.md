@@ -108,6 +108,16 @@ Gemma 3 4B는 이미지를 이해하는 모델입니다. 비전 프로젝터(`mm
 - **메모리:** 메모리를 약 1GB 더 씁니다. 앱이 꺼지면 설정에서 *이미지 인식*을 끄세요.
 - **한계:** 한글이나 작은 글씨는 틀리게 읽을 수 있습니다. 중요한 글자는 가까이, 밝게 찍어야 합니다.
 
+## 2-1-1. 사진 속 글자 읽기 (기기 OCR)
+
+사진을 첨부하면 전용 OCR이 먼저 글자를 정확히 읽고, 그 결과를 질문과 함께 Gemma에게 넘깁니다. 영수증, 간판, 문서 질문이 훨씬 정확해집니다. 모두 기기 안에서 처리합니다.
+
+- **iOS:** Apple **Vision**(`VNRecognizeTextRequest`, 한국어+영어, 정확도 우선). 앱 크기가 늘지 않습니다.
+- **Android:** Google **ML Kit 한국어 모델**(`text-recognition-korean`, 앱에 포함). Google Play 서비스나 인터넷이 필요 없습니다.
+- 첨부 미리보기의 **글자 읽기**를 누르면 Gemma를 거치지 않고 OCR 결과만 바로 보여 줍니다. 길게 눌러 복사할 수 있습니다.
+- 이미지 인식 파일(0.85GB)이 없거나 꺼져 있어도, 사진의 **글자**로는 답할 수 있습니다.
+- 코드는 `modules/expo-ocr`에 있는 로컬 Expo 모듈입니다(Swift와 Kotlin, 각 100줄 안팎).
+
 ## 2-2. 일러스트 그리기 (SVG)
 
 입력창에 그릴 내용을 적고 **🎨**를 누르면, Gemma가 벡터 그림(SVG) 코드를 써서 일러스트를 그립니다. "…그려줘", "…일러스트 만들어줘"라고 보내도 됩니다.
@@ -217,6 +227,7 @@ src/vision.ts           mmproj 다운로드, 카메라·앨범 사진 선택과 
 src/useVision.ts        이미지 인식 상태(받기·켜기·끄기)
 src/svg.ts              SVG 추출·정리·미완성 SVG 닫기, 그림 프롬프트
 src/SvgCard.tsx         일러스트 표시, PNG 저장·공유
+modules/expo-ocr/       기기 OCR 네이티브 모듈 (iOS Vision / Android ML Kit 한국어)
 tools/pack_model.sh     PC: HF git 저장소에서 받아 분할
 tools/split_model.py    분할 + SHA256SUMS + manifest.json
 .github/workflows/      publish-model.yml(모델 → Release), ios-unsigned.yml(서명 없는 .ipa)

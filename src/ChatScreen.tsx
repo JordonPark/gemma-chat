@@ -33,6 +33,7 @@ import { loadChat, saveChat } from './storage';
 import { colors } from './theme';
 import { describeVision, useVision, type VisionStatus } from './useVision';
 import { deleteImages, pickImage, type ImageSource } from './vision';
+import { isOcrAvailable, recognizeText } from '../modules/expo-ocr';
 
 const uid = () => `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
 
@@ -52,6 +53,9 @@ export function ChatScreen({ model, settings, gpuInfo, onChangeSettings, onRemov
   const [stats, setStats] = useState<GenStats | null>(null);
   const [showSettings, setShowSettings] = useState(false);
   const [pendingImage, setPendingImage] = useState<string | null>(null);
+  /** 첨부한 사진의 OCR 결과. undefined = 읽는 중, null = 실패/불가, string = 결과(빈 문자열이면 글자 없음) */
+  const [pendingOcr, setPendingOcr] = useState<string | null | undefined>(null);
+  const ocrJob = useRef<Promise<string | null> | null>(null);
   /** 일러스트를 그리는 중이면 { 설명, 미리보기 SVG, 받은 글자 수 } */
   const [drawing, setDrawing] = useState<{ desc: string; svg: string | null; chars: number } | null>(null);
   const listRef = useRef<FlatList<ChatMessage>>(null);
@@ -62,12 +66,40 @@ export function ChatScreen({ model, settings, gpuInfo, onChangeSettings, onRemov
   const busy = streaming !== null || drawing !== null;
   const canSend = !!input.trim() || !!pendingImage;
 
+  const clearPending = () => {
+    setPendingImage(null);
+    setPendingOcr(null);
+    ocrJob.current = null;
+  };
+
+  /** 사진을 고르면 바로 OCR 을 돌려 둔다 (보통 1초 안팎) */
+  const startOcr = (uri: string) => {
+    if (!isOcrAvailable()) {
+      setPendingOcr(null);
+      ocrJob.current = Promise.resolve(null);
+      return;
+    }
+    setPendingOcr(undefined);
+    const job = recognizeText(uri)
+      .then((r) => r.text)
+      .catch(() => null);
+    ocrJob.current = job;
+    job.then((t) => {
+      if (ocrJob.current === job) setPendingOcr(t);
+    });
+  };
+
   const attach = () => {
-    if (busy || !vision.ensureReady()) return;
+    if (busy) return;
+    // 이미지 인식(Gemma 비전)이 없어도 OCR 이 있으면 사진의 글자로 답할 수 있다
+    if (!isOcrAvailable() && !vision.ensureReady()) return;
     const go = async (src: ImageSource) => {
       try {
         const uri = await pickImage(src);
-        if (uri) setPendingImage(uri);
+        if (uri) {
+          setPendingImage(uri);
+          startOcr(uri);
+        }
       } catch (e: any) {
         Alert.alert('사진', String(e?.message ?? e));
       }
@@ -106,6 +138,28 @@ export function ChatScreen({ model, settings, gpuInfo, onChangeSettings, onRemov
     }
   };
 
+  /** 첨부 사진의 글자만 바로 보여 준다 (Gemma 를 거치지 않음) */
+  const readTextOnly = async () => {
+    if (!pendingImage || busy) return;
+    const image = pendingImage;
+    const text = (await ocrJob.current) ?? null;
+    clearPending();
+    setMessages((prev) => [
+      ...prev,
+      { id: uid(), role: 'user', content: '📝 사진 속 글자 읽기', image, ...(text ? { ocr: text } : {}) },
+      {
+        id: uid(),
+        role: 'assistant',
+        content:
+          text == null
+            ? '글자를 읽지 못했습니다. 다시 시도해 주세요.'
+            : text
+              ? `**사진 속 글자** (기기 OCR, 길게 눌러 복사)\n\n\`\`\`\n${text.replace(/```/g, "'''")}\n\`\`\``
+              : '사진에서 글자를 찾지 못했습니다.',
+      },
+    ]);
+  };
+
   const send = async () => {
     const text = input.trim();
     if (!canSend || busy) return;
@@ -119,10 +173,16 @@ export function ChatScreen({ model, settings, gpuInfo, onChangeSettings, onRemov
       content: text || (pendingImage ? '이 사진에 무엇이 있는지 설명하고, 보이는 글자가 있으면 읽어 주세요.' : ''),
       ...(pendingImage ? { image: pendingImage } : {}),
     };
+    if (pendingImage) {
+      const ocr = (await ocrJob.current) ?? null; // 아직 읽는 중이면 끝날 때까지 기다린다 (보통 1초 안팎)
+      if (ocr) userMsg.ocr = ocr;
+      // 이미지 인식이 준비 안 됐고 글자도 없으면, 이미지 인식 파일 안내를 띄운다
+      if (vision.status.kind !== 'ready' && !ocr && !vision.ensureReady()) return;
+    }
     const history = [...messages, userMsg];
     setMessages(history);
     setInput('');
-    setPendingImage(null);
+    clearPending();
     setStreaming('');
     setStats(null);
     await activateKeepAwakeAsync('gen');
@@ -142,7 +202,7 @@ export function ChatScreen({ model, settings, gpuInfo, onChangeSettings, onRemov
     if (busy) return;
     setMessages([]);
     setStats(null);
-    setPendingImage(null);
+    clearPending();
     deleteImages();
     resetConversationCache().catch(() => {});
   };
@@ -217,8 +277,19 @@ export function ChatScreen({ model, settings, gpuInfo, onChangeSettings, onRemov
       {pendingImage ? (
         <View style={styles.pending}>
           <Image source={{ uri: pendingImage }} style={styles.pendingImage} />
-          <Text style={styles.pendingText}>사진 첨부됨 · 질문을 적거나 그대로 전송하세요</Text>
-          <Pressable onPress={() => setPendingImage(null)} style={styles.pendingX}>
+          <Text style={styles.pendingText} numberOfLines={2}>
+            {pendingOcr === undefined
+              ? '글자 읽는 중…'
+              : pendingOcr
+                ? `글자 ${pendingOcr.length}자 인식 · 질문을 적거나 그대로 전송`
+                : '사진 첨부됨 · 질문을 적거나 그대로 전송'}
+          </Text>
+          {isOcrAvailable() ? (
+            <Pressable onPress={readTextOnly} style={styles.pendingBtn} disabled={busy || pendingOcr === undefined}>
+              <Text style={styles.pendingBtnText}>글자 읽기</Text>
+            </Pressable>
+          ) : null}
+          <Pressable onPress={clearPending} style={styles.pendingX}>
             <Text style={styles.pendingXText}>✕</Text>
           </Pressable>
         </View>
@@ -496,6 +567,8 @@ const styles = StyleSheet.create({
   pendingImage: { width: 52, height: 52, borderRadius: 8 },
   pendingText: { flex: 1, fontSize: 13, color: colors.muted },
   pendingX: { padding: 8 },
+  pendingBtn: { paddingHorizontal: 10, paddingVertical: 6, borderRadius: 8, backgroundColor: colors.card },
+  pendingBtnText: { color: colors.accent, fontSize: 13, fontWeight: '600' },
   pendingXText: { fontSize: 16, color: colors.muted },
   dlBar: {
     flexDirection: 'row',

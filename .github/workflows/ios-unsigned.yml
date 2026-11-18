@@ -12,6 +12,7 @@ on:
       - 'App.tsx'
       - 'index.ts'
       - 'src/**'
+      - 'modules/**'
       - 'assets/**'
       - 'app.config.ts'
       - 'package.json'

@@ -21,6 +21,7 @@ on:
       - 'App.tsx'
       - 'index.ts'
       - 'src/**'
+      - 'modules/**'
       - 'assets/**'
       - '.github/workflows/ota-update.yml'
 

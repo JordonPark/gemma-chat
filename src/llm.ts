@@ -9,8 +9,21 @@ export type Role = 'user' | 'assistant';
 /**
  * image: 앱 저장소에 있는 사진의 file:// URI (사용자 메시지에만)
  * svg: Gemma 가 그린 일러스트 (어시스턴트 메시지에만). 대화 기록으로 모델에 넘길 때는 content 만 쓴다.
+ * ocr: 사진에서 기기 OCR 로 읽은 글자 (사용자 메시지에만)
  */
-export type ChatMessage = { id: string; role: Role; content: string; image?: string; svg?: string };
+export type ChatMessage = { id: string; role: Role; content: string; image?: string; svg?: string; ocr?: string };
+
+const OCR_MAX_CHARS = 2000;
+/** OCR 결과를 질문에 붙인다. Gemma 가 직접 읽는 것보다 정확하므로 글자 관련 답은 이걸 우선 쓰게 한다 */
+function withOcr(question: string, ocr?: string) {
+  if (!ocr?.trim()) return question;
+  const t = ocr.trim().slice(0, OCR_MAX_CHARS);
+  return (
+    `${question}\n\n` +
+    `[사진 속 글자 — 기기 OCR 로 읽은 결과입니다. 글자·숫자에 관한 내용은 이 결과를 우선 사용하세요.]\n` +
+    `${t}\n[OCR 끝]`
+  );
+}
 
 export type Settings = {
   systemPrompt: string;
@@ -120,7 +133,10 @@ async function fitHistory(c: LlamaContext, history: ChatMessage[], budget: numbe
   let used = 0;
   for (let i = history.length - 1; i >= 0; i--) {
     const n =
-      (await c.tokenize(history[i].content)).tokens.length + 8 + (history[i].image ? IMAGE_TOKENS : 0); // 턴 구분 토큰 여유분
+      (await c.tokenize(history[i].content)).tokens.length +
+      8 + // 턴 구분 토큰 여유분
+      (history[i].image ? IMAGE_TOKENS : 0) +
+      (history[i].ocr ? Math.min(history[i].ocr!.length, OCR_MAX_CHARS) : 0); // OCR 글자 (한글은 대략 글자당 1토큰)
     if (used + n > budget && kept.length > 0) break;
     kept.unshift(history[i]);
     used += n;
@@ -145,9 +161,10 @@ export async function generateReply(
   const turns = await fitHistory(c, history, budget);
 
   // 사진은 가장 최근 사진 1장만 실제로 넣는다 (이전 사진까지 매번 다시 보면 느려진다)
-  // 이미지 인식이 꺼져 있으면: 새로 보낸 메시지에 사진이 있을 때만 오류, 예전 사진은 "[사진]" 글자로 대신한다
-  if (!visionReady && turns[turns.length - 1]?.image) {
-    throw new Error('이미지 인식이 꺼져 있습니다. 설정에서 이미지 인식을 켜거나 이미지 인식 파일을 받아 주세요.');
+  // 이미지 인식이 꺼져 있으면: 새 메시지의 사진은 OCR 글자로만 답하고, OCR 도 없으면 안내한다. 예전 사진은 "[사진]" 글자로 대신한다
+  const lastTurn = turns[turns.length - 1];
+  if (!visionReady && lastTurn?.image && !lastTurn.ocr?.trim()) {
+    throw new Error('이미지 인식이 꺼져 있고 사진에서 글자도 찾지 못했습니다. 설정에서 이미지 인식을 켜거나 이미지 인식 파일을 받아 주세요.');
   }
   const lastImageIdx = visionReady ? turns.map((m) => !!m.image).lastIndexOf(true) : -1;
   const messages: RNLlamaOAICompatibleMessage[] = [
@@ -158,9 +175,13 @@ export async function generateReply(
           role: m.role,
           content: [
             { type: 'image_url', image_url: { url: m.image } },
-            { type: 'text', text: m.content || '이 사진을 설명해 주세요.' },
+            { type: 'text', text: withOcr(m.content || '이 사진을 설명해 주세요.', m.ocr) },
           ],
         };
+      }
+      if (m.image && i === turns.length - 1) {
+        // 이미지 인식 없이 OCR 글자만으로 답하는 경우
+        return { role: m.role, content: withOcr(`[사진 첨부 — 이미지는 볼 수 없고 글자만 제공됩니다] ${m.content}`, m.ocr) };
       }
       return { role: m.role, content: m.image ? `[사진] ${m.content}` : m.content };
     }),

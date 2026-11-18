@@ -1,0 +1,20 @@
+plugins {
+  id 'com.android.library'
+  id 'expo-module-gradle-plugin'
+}
+
+group = 'expo.modules.ocr'
+version = '1.0.0'
+
+android {
+  namespace "expo.modules.ocr"
+  defaultConfig {
+    versionCode 1
+    versionName "1.0.0"
+  }
+}
+
+dependencies {
+  // ML Kit 한국어 인식 모델을 앱에 포함 (Google Play 서비스·인터넷 없이 동작). 한글과 영문을 함께 읽는다.
+  implementation 'com.google.mlkit:text-recognition-korean:16.0.1'
+}
