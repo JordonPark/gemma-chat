@@ -545,8 +545,21 @@ export function ChatScreen({ settings, gpuInfo, initialInput = '', onChangeSetti
     Keyboard.dismiss();
     setPreview(media);
   };
-  const scrollToLatest = () => {
-    if (followLatest.current && data.length > 0) listRef.current?.scrollToEnd({ animated: false });
+  // 대화를 열 때는 바로 맨 아래로, 그 뒤 새 말풍선이 생기면 부드럽게 미끄러져 내려간다
+  const openedChat = useRef<{ id: string; at: number } | null>(null);
+  if (openedChat.current?.id !== activeChat.id) openedChat.current = { id: activeChat.id, at: Date.now() };
+  const scrollToLatest = (animated = true) => {
+    if (!followLatest.current || data.length === 0) return;
+    // 연 직후(처음 그려지는 동안)에는 애니메이션 없이 바로 맨 아래로
+    const opening = Date.now() - (openedChat.current?.at ?? 0) < 800;
+    listRef.current?.scrollToEnd({ animated: animated && !opening });
+  };
+  // 위로 올려 읽는 중이면 "맨 아래로" 버튼을 보여 준다
+  const [showJump, setShowJump] = useState(false);
+  const jumpToLatest = () => {
+    followLatest.current = true;
+    setShowJump(false);
+    listRef.current?.scrollToEnd({ animated: true });
   };
   const libraryProps = {
     library, scope, busy,
@@ -645,10 +658,12 @@ export function ChatScreen({ settings, gpuInfo, initialInput = '', onChangeSetti
               data={data}
               keyExtractor={(m) => m.id}
               maintainVisibleContentPosition={{ minIndexForVisible: 0 }}
-              onLayout={scrollToLatest}
-              onContentSizeChange={scrollToLatest}
+              onLayout={() => scrollToLatest(false)}
+              onContentSizeChange={() => scrollToLatest(true)}
               onScroll={({ nativeEvent: { contentOffset, contentSize, layoutMeasurement } }) => {
                 followLatest.current = contentSize.height - layoutMeasurement.height - contentOffset.y < 48;
+                const away = contentSize.height - layoutMeasurement.height - contentOffset.y > 240;
+                if (away !== showJump) setShowJump(away);
               }}
               scrollEventThrottle={32}
               ListEmptyComponent={
@@ -728,6 +743,13 @@ export function ChatScreen({ settings, gpuInfo, initialInput = '', onChangeSetti
                 </FadeIn>
               )}
             />
+            {showJump ? (
+              <FadeIn offset={8} style={styles.jumpWrap}>
+                <PressableScale accessibilityRole="button" accessibilityLabel="맨 아래로" onPress={jumpToLatest} style={styles.jump}>
+                  <Text style={styles.jumpText}>↓</Text>
+                </PressableScale>
+              </FadeIn>
+            ) : null}
           </View>
 
           <View style={splitTranscript ? [styles.lowerPane, { marginTop: layout.foldGap }] : styles.composerPane}>
@@ -1117,6 +1139,23 @@ const styles = StyleSheet.create({
   },
   msg: { fontSize: 15, lineHeight: 22, color: colors.text },
   thinking: { flexDirection: 'row', alignItems: 'center', gap: 8, flexWrap: 'wrap' },
+  jumpWrap: { position: 'absolute', right: 16, bottom: 12 },
+  jump: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: colors.card,
+    borderWidth: 1,
+    borderColor: colors.border,
+    shadowColor: '#000',
+    shadowOpacity: 0.25,
+    shadowRadius: 8,
+    shadowOffset: { width: 0, height: 2 },
+    elevation: 4,
+  },
+  jumpText: { fontSize: 20, fontWeight: '700', color: colors.text },
   userText: { color: '#fff' },
   toolChip: { marginTop: 6, fontSize: 12, lineHeight: 17, color: 'rgba(255,255,255,0.8)' },
   composerPane: { backgroundColor: colors.bg },
