@@ -37,6 +37,23 @@ export function needsTranslation(line: string): boolean {
   return !/[가-힣]/.test(line) && /[A-Za-z\u00c0-\u024f\u3040-\u30ff\u4e00-\u9fff\u0400-\u04ff\u0e00-\u0e7f]{2,}/.test(line);
 }
 
+/**
+ * 사진 답의 첫머리: "분석되었습니다." + 기기에서 찾은 물건·글자 요약.
+ * (기기 물체 인식·OCR 결과만 쓰므로, Gemma 설명이 막혀도 이 부분은 보여 줄 수 있다)
+ */
+export function analysisHeader(annot: PhotoAnnotations | undefined | null): string {
+  const parts: string[] = [];
+  const objs = annot?.objects ?? [];
+  if (objs.length) {
+    const counts = new Map<string, number>();
+    for (const o of objs) counts.set(o.label, (counts.get(o.label) ?? 0) + 1);
+    parts.push(`찾은 물건: ${[...counts].map(([k, n]) => (n > 1 ? `${k} ${n}개` : k)).join(', ')}`);
+  }
+  const lines = annot?.lines.length ?? 0;
+  if (lines) parts.push(`사진 속 글자 ${lines}줄`);
+  return parts.length ? `**분석되었습니다.** ${parts.join(' · ')}` : '**분석되었습니다.**';
+}
+
 // ───────────────────────── COCO 80종 → 한국어
 
 const KO: Record<string, string> = {

@@ -38,7 +38,7 @@ import { conversationName, hasConversationContent, makeConversation, removeTask,
 import { DuoToolbar, hasDuoToolbar } from './DuoToolbar';
 import { FoldAwareArea } from './FoldAwareArea';
 import { AnnotatedPhoto } from './AnnotatedPhoto';
-import { analyzePhoto, needsTranslation, type PhotoAnalysis, type PhotoAnnotations } from './photoAnnotate';
+import { analysisHeader, analyzePhoto, needsTranslation, type PhotoAnalysis, type PhotoAnnotations } from './photoAnnotate';
 import { clearMemories, loadMemories, mightNeedTool, removeMemory, runTool } from './tools';
 import { getChatLayout, getFoldInsets, minInlineComposerWidth, type Division } from './foldLayout';
 import { deletePictures } from './legacyDrawing';
@@ -77,6 +77,9 @@ type Props = {
 /** 그림 그리기 요청인지 (그림 기능은 뺐으므로 안내 문구로 답한다) */
 const DRAW_INTENT =
   /(그려\s*(줘|주세요|주실|줄래|줄\s*수)|(그림|일러스트|이미지|삽화|배경\s*화면)[^.?!\n]{0,10}(만들어|생성해|그려))/;
+
+/** 사진 설명이 걸려도 기기 분석 결과조차 보여 주면 안 되는 범주 */
+const SEVERE = new Set(['sexual_minors', 'sexual_explicit', 'violence', 'extremism', 'self_harm']);
 
 export function ChatScreen({ model, settings, gpuInfo, initialInput = '', onChangeSettings, onRemoveModel, onModelReplaced }: Props) {
   const { fontScale } = useWindowDimensions();
@@ -358,6 +361,7 @@ export function ChatScreen({ model, settings, gpuInfo, initialInput = '', onChan
     workPending.current = true;
     let keptAwake = false;
     let answered = false;
+    let replyStage = false;
     try {
       if (pendingImage) {
         setWorkingWithPhoto(true);
@@ -400,13 +404,27 @@ export function ChatScreen({ model, settings, gpuInfo, initialInput = '', onChan
           console.warn('tool failed', e); // 도구가 실패하면 평소처럼 모델이 답한다
         }
       }
-      setStreaming('답변을 준비하는 중…');
+      setStreaming(userMsg.image ? '사진을 분석하는 중…' : '답변을 준비하는 중…');
+      replyStage = true;
       const { text: reply, stats: st } = await generateReply(history, settings);
-      setMessages((prev) => [...prev, { id: uid(), role: 'assistant', content: reply || '(빈 응답)' }]);
+      // 사진 답은 "분석되었습니다." + 기기에서 찾은 물건·글자 요약으로 시작한다
+      const content = userMsg.image ? `${analysisHeader(userMsg.annot)}\n\n${reply}` : reply || '(빈 응답)';
+      setMessages((prev) => [...prev, { id: uid(), role: 'assistant', content }]);
       setStats(st);
       answered = true;
     } catch (e: any) {
-      if (e instanceof ContentSafetyError) {
+      if (e instanceof ContentSafetyError && replyStage && userMsg.image && !SEVERE.has(e.category)) {
+        // 사진은 요청 검사는 통과했는데 Gemma 설명만 걸린 경우: 기기 분석 결과(물건·글자 위치)는 그대로 보여 준다
+        setMessages((prev) => [
+          ...prev,
+          {
+            id: uid(),
+            role: 'assistant',
+            content: `${analysisHeader(userMsg.annot)}\n\n사진 위에 찾은 물건과 글자를 표시했어요. 자세한 설명은 이용 기준에 따라 생략했습니다.`,
+          },
+        ]);
+        answered = true;
+      } else if (e instanceof ContentSafetyError) {
         if (e.category !== 'self_harm') recordStrike(); // 자해 신호는 도움 안내만 하고 벌점은 주지 않는다
         const blocked = e.category !== 'self_harm';
         setMessages((prev) => [

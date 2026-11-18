@@ -7,7 +7,6 @@ import {
   CLASSIFIER_GUIDE,
   ContentSafetyError,
   SAFETY_GUIDE,
-  SAFETY_REFUSAL,
   SAFETY_REMINDER,
   SAFETY_SCHEMA,
   parseSafetyCategory,
@@ -181,6 +180,12 @@ async function fitHistory(c: LlamaContext, history: ChatMessage[], budget: numbe
   return kept;
 }
 
+/** 기기 물체 인식이 찾은 물건 이름을 질문에 붙인다 (사진 위 상자와 설명이 어긋나지 않게) */
+function withObjects(text: string, m: ChatMessage): string {
+  const names = [...new Set((m.annot?.objects ?? []).map((o) => o.label))];
+  return names.length ? `${text}\n\n(기기 물체 인식이 찾은 물건: ${names.join(', ')})` : text;
+}
+
 export type GenStats = { tokens: number; tokPerSec: number; interrupted: boolean };
 
 export async function generateReply(
@@ -214,13 +219,13 @@ export async function generateReply(
           role: m.role,
           content: [
             { type: 'image_url', image_url: { url: m.image } },
-            { type: 'text', text: withOcr(m.content || '이 사진을 설명해 주세요.', m.ocr) },
+            { type: 'text', text: withObjects(withOcr(m.content || '이 사진을 설명해 주세요.', m.ocr), m) },
           ],
         };
       }
       if (m.image && i === turns.length - 1) {
         // 이미지 인식 없이 OCR 글자만으로 답하는 경우
-        return { role: m.role, content: withOcr(`[사진 첨부 — 이미지는 볼 수 없고 글자만 제공됩니다] ${m.content}`, m.ocr) };
+        return { role: m.role, content: withObjects(withOcr(`[사진 첨부 — 이미지는 볼 수 없고 글자만 제공됩니다] ${m.content}`, m.ocr), m) };
       }
       // 그려 준 그림은 "[그림: …]" 형식을 그대로 넘기면 모델이 그 글자를 흉내 내므로 평범한 문장으로 바꿔 넘긴다
       if (m.picture || m.svg) {
@@ -316,20 +321,34 @@ export async function checkGeneratedContent(
         earlier_user_turns: earlier.map((e) => e.slice(0, 300)),
         content: segment,
       }).replace(/[<>]/g, (mark) => (mark === '<' ? '\\u003c' : '\\u003e'));
-      const result = await c.completion({
-        messages: [
-          { role: 'system', content: `${CLASSIFIER_GUIDE}\n${replyNote}\nReturn only JSON {"category": ...}.` },
-          { role: 'user', content: input },
-        ],
-        jinja: true,
-        n_predict: 24,
-        temperature: 0,
-        stop: STOP_WORDS,
-        response_format: { type: 'json_schema', json_schema: { strict: true, schema: SAFETY_SCHEMA } },
-      });
-      if (result.interrupted) throw new ContentSafetyError('콘텐츠 검사를 중단했습니다.');
-      const cat = parseSafetyCategory(stripStop(result.content || result.text || ''));
-      if (cat === null) throw new ContentSafetyError(SAFETY_REFUSAL);
+      const classify = async () => {
+        const result = await c.completion({
+          messages: [
+            { role: 'system', content: `${CLASSIFIER_GUIDE}\n${replyNote}\nReturn only JSON {"category": ...}.` },
+            { role: 'user', content: input },
+          ],
+          jinja: true,
+          n_predict: 48,
+          temperature: 0,
+          stop: STOP_WORDS,
+          response_format: { type: 'json_schema', json_schema: { strict: true, schema: SAFETY_SCHEMA } },
+        });
+        if (result.interrupted) throw new ContentSafetyError('콘텐츠 검사를 중단했습니다.');
+        return parseSafetyCategory(stripStop(result.content || result.text || ''));
+      };
+      // 분류 결과를 못 읽으면 한 번 더 묻는다. 그래도 안 되면(분류기 오작동) 정규식 1차 검사 결과로 판단한다
+      // — 멀쩡한 사진·질문이 "이용 기준" 안내로 막히지 않게
+      let cat = await classify();
+      if (cat === null) {
+        await c.clearCache(false);
+        cat = await classify();
+      }
+      if (cat === null) {
+        const hit = quickScreen(segment);
+        if (hit && hit !== 'self_harm') throw new ContentSafetyError(refusalFor(hit), hit);
+        console.warn('safety classifier gave no category; regex screen passed');
+        continue;
+      }
       if (cat !== 'safe') throw new ContentSafetyError(refusalFor(cat), cat);
     }
   } finally {
