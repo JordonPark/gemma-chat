@@ -106,7 +106,7 @@ export function deleteImageModel() {
   if (d.exists) d.delete();
 }
 
-async function fetchSdManifest(signal: AbortSignal): Promise<SdManifest> {
+export async function fetchSdManifest(signal: AbortSignal): Promise<SdManifest> {
   let res: Response;
   try {
     res = await fetch(`${MODEL_RELEASE_URL}/sd.json`, { signal, cache: 'no-store' });

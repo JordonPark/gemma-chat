@@ -34,7 +34,7 @@ export function deleteVision() {
   if (d.exists) d.delete();
 }
 
-async function fetchVisionManifest(signal: AbortSignal): Promise<VisionManifest> {
+export async function fetchVisionManifest(signal: AbortSignal): Promise<VisionManifest> {
   let res: Response;
   try {
     res = await fetch(`${MODEL_RELEASE_URL}/vision.json`, { signal, cache: 'no-store' });

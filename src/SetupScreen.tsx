@@ -12,13 +12,49 @@ import {
   type ImportProgress,
   type InstalledModel,
 } from './modelStore';
-import { DownloadCancelled, downloadModel, hasPartialDownload } from './modelDownload';
-import { downloadImageModel, findInstalledImageModel, isImageGenAvailable, prepareImageModel } from './imageGen';
-
-/** iPhone(그림 모델 지원)이면 처음 설치 때 그림 모델도 같이 받는다 */
-const WITH_IMAGE_MODEL = isImageGenAvailable();
-const SIZE_TEXT = WITH_IMAGE_MODEL ? '약 5.1GB: 채팅 2.4GB + 그림 2.7GB' : '약 2.4GB';
+import { DownloadCancelled, downloadModel, fetchManifest, hasPartialDownload } from './modelDownload';
+import { downloadVision, fetchVisionManifest, findInstalledVision } from './vision';
+import {
+  downloadImageModel,
+  fetchSdManifest,
+  findInstalledImageModel,
+  isImageGenAvailable,
+  prepareImageModel,
+} from './imageGen';
 import { colors } from './theme';
+
+/**
+ * 처음 설치 때 한 번에 받는 것: 채팅 모델 + 사진 인식(비전) + 그림 모델(iPhone 만).
+ * 글자 읽기(OCR)는 기기 내장 기능이라 따로 받을 것이 없다.
+ */
+const WITH_IMAGE_MODEL = isImageGenAvailable();
+const STEPS = WITH_IMAGE_MODEL ? 3 : 2;
+const FALLBACK_SIZE = WITH_IMAGE_MODEL ? '약 5GB' : '약 3.2GB';
+
+const gb = (n: number) => `${(n / 1024 ** 3).toFixed(1)}GB`;
+
+/** Release 의 manifest 들을 읽어 실제 받을 용량을 글로 만든다 (못 읽으면 대략값) */
+async function fetchSizeText(): Promise<string | null> {
+  const ac = new AbortController();
+  const timer = setTimeout(() => ac.abort(), 10_000);
+  try {
+    const [chat, vision, sd] = await Promise.allSettled([
+      fetchManifest(ac.signal),
+      fetchVisionManifest(ac.signal),
+      WITH_IMAGE_MODEL ? fetchSdManifest(ac.signal) : Promise.reject(new Error('n/a')),
+    ]);
+    if (chat.status !== 'fulfilled') return null;
+    const parts = [['채팅', chat.value.size]] as [string, number][];
+    if (vision.status === 'fulfilled') parts.push(['사진 인식', vision.value.size]);
+    if (sd.status === 'fulfilled') parts.push(['그림', sd.value.size]);
+    const total = parts.reduce((a, [, n]) => a + n, 0);
+    return parts.length === 1 ? `약 ${gb(total)}` : `약 ${gb(total)}: ${parts.map(([k, n]) => `${k} ${gb(n)}`).join(' + ')}`;
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timer);
+  }
+}
 
 const STAGE_LABEL: Record<ImportProgress['stage'], string> = {
   checking: '확인 중',
@@ -39,8 +75,13 @@ export function SetupScreen({ onInstalled }: { onInstalled: (m: InstalledModel) 
   const [inbox, setInbox] = useState<File[]>([]);
   const [showManual, setShowManual] = useState(false);
   const [lastError, setLastError] = useState<string | null>(null);
+  const [sizeText, setSizeText] = useState(FALLBACK_SIZE);
   const abortRef = useRef<AbortController | null>(null);
   const autoStarted = useRef(false);
+
+  useEffect(() => {
+    fetchSizeText().then((t) => t && setSizeText(t));
+  }, []);
 
   const refreshInbox = useCallback(() => {
     if (Platform.OS === 'ios') setInbox(listInboxFiles());
@@ -54,22 +95,30 @@ export function SetupScreen({ onInstalled }: { onInstalled: (m: InstalledModel) 
     setLastError(null);
     await activateKeepAwakeAsync('download'); // 다운로드 중 화면 꺼짐(→ 앱 일시정지) 방지
     try {
-      const withImage = WITH_IMAGE_MODEL && !findInstalledImageModel();
-      const m = await downloadModel(
-        (p) => setProgress(withImage ? { ...p, detail: `1/2 채팅 모델 · ${p.detail ?? ''}` } : p),
-        ac.signal,
-      );
-      // 그림 모델도 이어서 받고 미리 준비한다. 실패·취소해도 채팅은 바로 시작하고, 그림 모델은 나중에 받을 수 있다
-      if (withImage && !ac.signal.aborted) {
+      const step = (n: number, what: string) => (p: ImportProgress) =>
+        setProgress({ ...p, detail: `${n}/${STEPS} ${what} · ${p.detail ?? ''}` });
+      const m = await downloadModel(step(1, '채팅 모델'), ac.signal);
+
+      // 사진 인식·그림 모델도 이어서 받는다. 실패해도 채팅은 바로 시작하고, 나머지는 쓸 때 다시 받는다
+      const failed: string[] = [];
+      if (!ac.signal.aborted && !findInstalledVision()) {
         try {
-          await downloadImageModel((p) => setProgress({ ...p, detail: `2/2 그림 모델 · ${p.detail ?? ''}` }), ac.signal);
-          setProgress({ stage: 'preparing', ratio: 1, detail: '이 기기에서 한 번만, 1~3분 걸립니다' });
+          await downloadVision(step(2, '사진 인식'), ac.signal);
+        } catch (e: any) {
+          if (!(e instanceof DownloadCancelled) && !ac.signal.aborted) failed.push(`사진 인식: ${e?.message ?? e}`);
+        }
+      }
+      if (WITH_IMAGE_MODEL && !ac.signal.aborted && !findInstalledImageModel()) {
+        try {
+          await downloadImageModel(step(3, '그림 모델'), ac.signal);
+          setProgress({ stage: 'preparing', ratio: 1, detail: `${STEPS}/${STEPS} 이 기기에서 한 번만, 1~3분 걸립니다` });
           await prepareImageModel();
         } catch (e: any) {
-          if (!(e instanceof DownloadCancelled) && !ac.signal.aborted) {
-            Alert.alert('그림 모델은 나중에 받을 수 있어요', `채팅은 바로 시작합니다. 그림은 처음 그릴 때 다시 받습니다.\n(${e?.message ?? e})`);
-          }
+          if (!(e instanceof DownloadCancelled) && !ac.signal.aborted) failed.push(`그림 모델: ${e?.message ?? e}`);
         }
+      }
+      if (failed.length) {
+        Alert.alert('일부는 나중에 받을 수 있어요', `채팅은 바로 시작합니다. 아래 항목은 처음 쓸 때 다시 받습니다.\n\n${failed.join('\n\n')}`);
       }
       onInstalled(m);
     } catch (e: any) {
@@ -90,7 +139,7 @@ export function SetupScreen({ onInstalled }: { onInstalled: (m: InstalledModel) 
   const onDownloadPress = async () => {
     const net = await Network.getNetworkStateAsync().catch(() => null);
     if (net?.type === Network.NetworkStateType.CELLULAR) {
-      Alert.alert('모바일 데이터 사용', `${SIZE_TEXT}를 모바일 데이터로 받습니다. 계속할까요? (Wi-Fi 권장)`, [
+      Alert.alert('모바일 데이터 사용', `${sizeText}를 모바일 데이터로 받습니다. 계속할까요? (Wi-Fi 권장)`, [
         { text: '취소', style: 'cancel' },
         { text: '받기', onPress: () => startDownload() },
       ]);
@@ -153,7 +202,7 @@ export function SetupScreen({ onInstalled }: { onInstalled: (m: InstalledModel) 
       </View>
       <Text style={styles.title}>Gemma Chat</Text>
       <Text style={styles.sub}>
-        처음 한 번만 모델({SIZE_TEXT})을 내려받습니다. 그 뒤 대화와 그림은 인터넷 없이 이 기기 안에서만 처리됩니다.
+        처음 한 번만 채팅·사진 인식{WITH_IMAGE_MODEL ? '·그림' : ''} 모델({sizeText})을 내려받습니다. 그 뒤 대화, 사진·글자 인식{WITH_IMAGE_MODEL ? ', 그림' : ''}은 인터넷 없이 이 기기 안에서만 처리됩니다.
       </Text>
 
       {busy ? (
@@ -179,14 +228,14 @@ export function SetupScreen({ onInstalled }: { onInstalled: (m: InstalledModel) 
         </View>
       ) : (
         <View style={styles.card}>
-          <Text style={styles.h}>Gemma 3 4B 모델 다운로드</Text>
+          <Text style={styles.h}>Gemma 3 4B{WITH_IMAGE_MODEL ? ' + 그림' : ''} 모델 다운로드</Text>
           <Text style={styles.p}>
             GitHub 저장소(JordonPark/gemma-chat)의 Release 에서 조각을 받아 기기 안에서 이어 붙이고 SHA-256 으로
             검증합니다. Wi-Fi 에서는 앱을 열면 자동으로 시작합니다.
           </Text>
           {lastError ? <Text style={[styles.muted, { color: colors.danger }]}>{lastError}</Text> : null}
           <Pressable style={styles.btn} onPress={onDownloadPress}>
-            <Text style={styles.btnText}>{hasPartialDownload() ? '이어서 받기' : `모델 다운로드 (${SIZE_TEXT})`}</Text>
+            <Text style={styles.btnText}>{hasPartialDownload() ? '이어서 받기' : `모델 다운로드 (${sizeText})`}</Text>
           </Pressable>
         </View>
       )}
