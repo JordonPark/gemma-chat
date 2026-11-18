@@ -16,6 +16,7 @@ import {
   safetySegments,
 } from './contentSafety';
 import { UNIT_IDS, contextForPrompt, todayLine, type ToolCall } from './tools';
+import { LANGUAGE_GUIDE, LANGUAGE_REMINDER, needsKoreanRetry } from './languagePolicy';
 
 export type Role = 'user' | 'assistant';
 /**
@@ -186,9 +187,9 @@ export async function generateReply(
   const c = ctx;
   if (!c) throw new Error('모델이 로드되지 않았습니다.');
 
-  // 시스템 프롬프트 = 안전 기준 + 사용자 설정 + 오늘 날짜 + 기억해 둔 내용 + 안전 기준 재확인
+  // 시스템 프롬프트 = 안전 기준 + 언어 규칙 + 사용자 설정 + 오늘 날짜 + 기억해 둔 내용 + 안전·언어 재확인
   // (사용자 프롬프트·기억에 "규칙 무시" 같은 말이 있어도 안전 기준이 앞뒤에서 우선한다)
-  const system = [SAFETY_GUIDE, settings.systemPrompt.trim(), contextForPrompt(), SAFETY_REMINDER]
+  const system = [SAFETY_GUIDE, LANGUAGE_GUIDE, settings.systemPrompt.trim(), contextForPrompt(), SAFETY_REMINDER, LANGUAGE_REMINDER]
     .filter(Boolean)
     .join('\n\n');
   const sysTokens = (await c.tokenize(system)).tokens.length;
@@ -231,25 +232,42 @@ export async function generateReply(
     }),
   ];
 
-  let acc = '';
-  const res = await c.completion(
-    {
-      messages,
-      jinja: true,
-      n_predict: settings.maxNewTokens,
-      temperature: settings.temperature,
-      top_k: 64,
-      top_p: 0.95,
-      min_p: 0.0,
-      penalty_repeat: 1.0,
-      stop: STOP_WORDS,
-    },
-    (data) => {
-      acc += data.token;
-    },
-  );
+  const run = async (msgs: RNLlamaOAICompatibleMessage[]) => {
+    let acc = '';
+    const r = await c.completion(
+      {
+        messages: msgs,
+        jinja: true,
+        n_predict: settings.maxNewTokens,
+        temperature: settings.temperature,
+        top_k: 64,
+        top_p: 0.95,
+        min_p: 0.0,
+        penalty_repeat: 1.0,
+        stop: STOP_WORDS,
+      },
+      (data) => {
+        acc += data.token;
+      },
+    );
+    return { res: r, text: stripStop(r.content || r.text || acc).trim() };
+  };
 
-  const text = res.interrupted ? '답변 생성을 중단했습니다.' : stripStop(res.content || res.text || acc).trim();
+  let { res, text } = await run(messages);
+  // 언어 가드레일: 번역·외국어 요청이 아닌데 답이 대부분 외국어면, 한국어로 답하라고 덧붙여 한 번 다시 만든다
+  const request = lastTurn?.content ?? '';
+  if (!res.interrupted && needsKoreanRetry(text, request, !!(lastTurn?.image || lastTurn?.ocr))) {
+    // 컨텍스트가 넘치지 않게, 앞 답을 덧붙이지 않고 마지막 질문에 한 줄만 더해 다시 만든다
+    const last = messages[messages.length - 1];
+    const note = '\n\n(한국어로 답해 주세요. 코드·고유명사는 그대로 두어도 됩니다.)';
+    const retryLast: RNLlamaOAICompatibleMessage =
+      typeof last.content === 'string'
+        ? { ...last, content: last.content + note }
+        : { ...last, content: [...(last.content as any[]), { type: 'text', text: note }] };
+    const again = await run([...messages.slice(0, -1), retryLast]);
+    if (!again.res.interrupted && again.text) ({ res, text } = again);
+  }
+  if (res.interrupted) text = '답변 생성을 중단했습니다.';
   if (!res.interrupted) await checkGeneratedContent(text, 'assistant reply');
   return {
     text,
