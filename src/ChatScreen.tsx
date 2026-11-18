@@ -23,14 +23,10 @@ import { activateKeepAwakeAsync, deactivateKeepAwake } from 'expo-keep-awake';
 import * as Sharing from 'expo-sharing';
 import {
   checkGeneratedContent,
-  generateIllustration,
   generateReply,
-  loadModel,
-  makeImagePrompt,
   pickTool,
   resetConversationCache,
   stopGeneration,
-  unloadModel,
   type ChatMessage,
   type GenStats,
   type Settings,
@@ -39,26 +35,15 @@ import type { AreaSize } from '../modules/gemma-fold';
 import { FoldAwareArea } from './FoldAwareArea';
 import { clearMemories, loadMemories, mightNeedTool, removeMemory, runTool } from './tools';
 import { getChatLayout, minInlineComposerWidth, type Division } from './foldLayout';
-import {
-  DRAW_STYLES,
-  cancelImageGen,
-  deletePictures,
-  drawPicture,
-  isImageModelPrepared,
-  getDrawStyle,
-  prepareImageModel,
-  type DrawStyle,
-  type ImageModelUpdate,
-} from './imageGen';
+import { deletePictures } from './legacyDrawing';
 import { ImageViewer, type ImagePreview } from './ImageViewer';
 import { ContentSafetyError } from './contentSafety';
 import { LegalInfo } from './LegalInfo';
 import { ReportContent } from './ReportContent';
 import { APP_NAME, SUPPORT_BASE_URL } from './storeConfig';
-import { describeImageModel, imageModelSizeText, useImageModel, type ImageModelStatus } from './useImageModel';
 import { formatBytes, type InstalledModel } from './modelStore';
 import { Markdown } from './Markdown';
-import { SvgCard } from './SvgCard';
+import { SvgCard } from './SvgCard'; // 예전에 만든 일러스트 표시용
 import { UpdateBanner, checkForUpdateInteractive, describeAppVersion } from './UpdateBanner';
 import { loadChat, saveChat } from './storage';
 import { colors } from './theme';
@@ -82,24 +67,9 @@ type Props = {
   onModelReplaced: (m: InstalledModel) => void;
 };
 
-/** 그림 그리기 요청인지: "고양이 그려줘", "그림 만들어줘", "피자 사진을 기반으로 이미지 만들어줘", "배경화면 생성해줘" … */
+/** 그림 그리기 요청인지 (그림 기능은 뺐으므로 안내 문구로 답한다) */
 const DRAW_INTENT =
-  /(그려\s*(줘|주세요|주실|줄래|봐|줄\s*수)|(그림|일러스트|이미지|사진|삽화|짤|캐릭터|배경\s*화면|포스터|웹툰|만화)[^.?!\n]{0,15}(만들어|생성|그려))/;
-
-/**
- * "사진을 기반으로", "이거로" 처럼 앞서 올린 사진을 가리키면, 그 사진에 대한 답(사진 설명)을 그림 구상에 함께 넘긴다.
- * (그림 모델은 사진을 직접 보지 못하므로 설명을 바탕으로 비슷하게 그린다)
- */
-function referencedPhoto(request: string, msgs: ChatMessage[]): string | undefined {
-  if (!/(사진|이미지|이거|그거|이걸|그걸|위에|방금|아까)/.test(request)) return undefined;
-  for (let i = msgs.length - 1; i >= 0; i--) {
-    if (msgs[i].role === 'user' && msgs[i].image) {
-      const reply = msgs.slice(i + 1).find((m) => m.role === 'assistant' && m.content && !m.picture);
-      return reply?.content.slice(0, 600);
-    }
-  }
-  return undefined;
-}
+  /(그려\s*(줘|주세요|주실|줄래|줄\s*수)|(그림|일러스트|이미지|삽화|배경\s*화면)[^.?!\n]{0,10}(만들어|생성해|그려))/;
 
 export function ChatScreen({ model, settings, gpuInfo, initialInput = '', onChangeSettings, onRemoveModel, onModelReplaced }: Props) {
   const { fontScale } = useWindowDimensions();
@@ -114,28 +84,10 @@ export function ChatScreen({ model, settings, gpuInfo, initialInput = '', onChan
   /** 첨부한 사진의 OCR 결과. undefined = 읽는 중, null = 실패/불가, string = 결과(빈 문자열이면 글자 없음) */
   const [pendingOcr, setPendingOcr] = useState<string | null | undefined>(null);
   const ocrJob = useRef<Promise<string | null> | null>(null);
-  /** 일러스트를 그리는 중이면 { 설명, 미리보기 SVG, 받은 글자 수 } */
-  const [drawing, setDrawing] = useState<{
-    desc: string;
-    svg: string | null;
-    chars: number;
-    /** 그림 모델(iOS)로 그리는 중이면 지금 단계 설명 */
-    phase?: string;
-    progress?: number;
-  } | null>(null);
   const inputRef = useRef<ComponentRef<typeof TextInput>>(null);
   const listRef = useRef<FlatList<ChatMessage>>(null);
   const followLatest = useRef(true);
-  const busyRef = useRef(false);
-  useEffect(() => {
-    busyRef.current = streaming !== null || drawing !== null;
-  }, [streaming, drawing]);
   const vision = useVision(settings);
-  // 그림 모델을 다 받으면 바로 준비(Neural Engine 컴파일)까지 해 둔다 → 첫 그림부터 기다림 없이 그린다
-  const pendingDrawRef = useRef<string | null>(null);
-  const drawRef = useRef<(d: string) => void>(() => {});
-  const prepareRef = useRef<() => void>(() => {});
-  const imageModel = useImageModel(() => prepareRef.current());
 
   // ── 더 작은 채팅 모델로 교체 (설정을 열 때 한 번 확인) ──
   const [upgrade, setUpgrade] = useState<ModelUpgrade | null>(null);
@@ -147,9 +99,6 @@ export function ChatScreen({ model, settings, gpuInfo, initialInput = '', onChan
     upgradeChecked.current = true;
     checkSmallerModel(model).then(setUpgrade);
   }, [showSettings, model]);
-  useEffect(() => {
-    if (showSettings) imageModel.checkUpdate();
-  }, [showSettings, imageModel]);
   const startUpgrade = () => {
     if (!upgrade || upgradeDl) return;
     Alert.alert(
@@ -182,11 +131,10 @@ export function ChatScreen({ model, settings, gpuInfo, initialInput = '', onChan
       ],
     );
   };
-  const usePictureModel = imageModel.status.kind !== 'unsupported';
 
   useEffect(() => saveChat(messages), [messages]);
 
-  const busy = streaming !== null || drawing !== null;
+  const busy = streaming !== null;
   const canSend = !!input.trim() || !!pendingImage;
 
   const clearPending = () => {
@@ -234,162 +182,6 @@ export function ChatScreen({ model, settings, gpuInfo, initialInput = '', onChan
     ]);
   };
 
-  /**
-   * iPhone: 그림 모델(Stable Diffusion)로 고른 그림체로 그린다.
-   * 메모리를 위해 채팅 모델을 잠시 내렸다가, 다 그리면 다시 올린다.
-   */
-  const drawWithModel = async (d: string, style: DrawStyle, addRequest = true) => {
-    followLatest.current = true;
-    if (addRequest) setMessages((prev) => [...prev, { id: uid(), role: 'user', content: `🎨 ${d}` }]);
-    setInput('');
-    setStats(null);
-    const phase = (p: string, progress?: number) =>
-      setDrawing({ desc: d, svg: null, chars: 0, phase: p, progress });
-    phase('그릴 장면을 구상하는 중…');
-    await activateKeepAwakeAsync('draw');
-    let unloaded = false;
-    try {
-      const { prompt, people } = await makeImagePrompt(d, referencedPhoto(d, messages));
-      phase('메모리 확보 중…');
-      await unloadModel();
-      unloaded = true;
-      // 모델 불러오기는 진행률이 없으므로 경과 시간을 보여 준다 (멈춘 게 아니라는 표시)
-      const firstTime = !isImageModelPrepared();
-      let loadTimer: ReturnType<typeof setInterval> | null = null;
-      const stopTimer = () => {
-        if (loadTimer) clearInterval(loadTimer);
-        loadTimer = null;
-      };
-      const uri = await drawPicture(prompt, style, people, (stage, p) => {
-        if (stage === 'loading') {
-          const t0 = Date.now();
-          const show = () => {
-            const s = Math.round((Date.now() - t0) / 1000);
-            const el = s >= 60 ? `${Math.floor(s / 60)}분 ${s % 60}초` : `${s}초`;
-            phase(
-              firstTime
-                ? `새 그림 모델을 이 기기에 맞게 준비하는 중… ${el}\n처음 한 번만, 보통 1~5분 걸립니다. 앱을 켜 둔 채로 기다려 주세요.` +
-                    (s > 420 ? '\n너무 오래 걸리면 앱을 완전히 껐다 켠 뒤 다시 그려 보세요.' : '')
-                : `그림 모델 불러오는 중… ${el}` + (s > 120 ? '\n평소보다 오래 걸립니다. 앱을 껐다 켜면 나아질 수 있습니다.' : ''),
-            );
-          };
-          stopTimer();
-          show();
-          loadTimer = setInterval(show, 1000);
-        } else {
-          stopTimer();
-          phase(`그리는 중 ${p?.step ?? 0}/${p?.stepCount ?? 25}`, p ? p.step / Math.max(1, p.stepCount) : 0);
-        }
-      }).finally(stopTimer);
-      setMessages((prev) => [
-        ...prev,
-        { id: uid(), role: 'assistant', content: `[그림: ${d} · ${style.label}]`, picture: uri },
-      ]);
-    } catch (e: any) {
-      const msg = String(e?.message ?? e);
-      if (!/취소/.test(msg)) Alert.alert('그리기 오류', msg);
-    } finally {
-      if (unloaded) {
-        phase('채팅 모델 다시 불러오는 중…');
-        try {
-          await loadModel(model.path, settings);
-          vision.retry();
-        } catch (e: any) {
-          Alert.alert('채팅 모델을 다시 불러오지 못했습니다', `앱을 껐다 켜 주세요.\n(${e?.message ?? e})`);
-        }
-      }
-      deactivateKeepAwake('draw');
-      setDrawing(null);
-    }
-  };
-
-  /** 그림 모델 첫 준비: 채팅 모델을 잠시 내리고 컴파일한 뒤 다시 올린다. 기다리던 그림 요청이 있으면 이어서 진행 */
-  prepareRef.current = async () => {
-    // 답변을 만들거나 그리는 중이면 끝날 때까지 기다렸다가 채팅 모델을 내린다
-    while (busyRef.current) await new Promise((r) => setTimeout(r, 500));
-    followLatest.current = true;
-    setDrawing({ desc: '', svg: null, chars: 0, phase: '그림 모델을 처음 준비하는 중… (이 기기에서 한 번만, 보통 1~5분. 앱을 켜 둔 채로 기다려 주세요)' });
-    await activateKeepAwakeAsync('sd-prepare');
-    let unloaded = false;
-    try {
-      await unloadModel();
-      unloaded = true;
-      await prepareImageModel();
-      setMessages((prev) => [
-        ...prev,
-        { id: uid(), role: 'assistant', content: '그림 준비가 끝났어요. 이제 그림을 바로 그릴 수 있습니다. 🎨' },
-      ]);
-    } catch (e: any) {
-      Alert.alert('그림 모델 준비 실패', `처음 그릴 때 다시 준비합니다.\n(${e?.message ?? e})`);
-    } finally {
-      if (unloaded) {
-        setDrawing({ desc: '', svg: null, chars: 0, phase: '채팅 모델 다시 불러오는 중…' });
-        try {
-          await loadModel(model.path, settings);
-          vision.retry();
-        } catch (e: any) {
-          Alert.alert('채팅 모델을 다시 불러오지 못했습니다', `앱을 껐다 켜 주세요.\n(${e?.message ?? e})`);
-        }
-      }
-      deactivateKeepAwake('sd-prepare');
-      setDrawing(null);
-      const pending = pendingDrawRef.current;
-      pendingDrawRef.current = null;
-      if (pending) setTimeout(() => drawRef.current(pending), 0);
-    }
-  };
-
-  /** 설명을 받아 그림을 그린다 (iPhone: 그림 모델, 그 외: 도형 일러스트) */
-  const draw = async (desc: string) => {
-    if (busy) return;
-    const d = desc.trim();
-    if (!d) {
-      Alert.alert('그림 그리기', '무엇을 그릴지 입력창에 적은 뒤 🎨 를 누르세요.\n예: 우주를 나는 고양이, 노을 지는 바닷가');
-      return;
-    }
-    if (usePictureModel) {
-      if (!imageModel.ensureReady()) {
-        if (imageModel.status.kind === 'missing') pendingDrawRef.current = d; // 다 받고 준비되면 이어서 그린다
-        return;
-      }
-      // 요청에 그림체를 말했으면 바로 그리고, 아니면 채팅으로 물어본다
-      const named = DRAW_STYLES.find((st) => st.keywords.test(d));
-      if (named) return drawWithModel(d, named);
-      followLatest.current = true;
-      setMessages((prev) => [
-        ...prev,
-        { id: uid(), role: 'user', content: `🎨 ${d}` },
-        {
-          id: uid(),
-          role: 'assistant',
-          content: '어떤 그림체로 그릴까요? 아래에서 고르거나 채팅으로 답해 주세요. (예: "애니로", "사진처럼")',
-          choices: DRAW_STYLES.map((st) => ({ id: st.id, label: st.label })),
-          choiceFor: d,
-        },
-      ]);
-      setInput('');
-      return;
-    }
-    followLatest.current = true;
-    setMessages((prev) => [...prev, { id: uid(), role: 'user', content: `🎨 ${d}` }]);
-    setInput('');
-    setStats(null);
-    setDrawing({ desc: d, svg: null, chars: 0 });
-    await activateKeepAwakeAsync('draw');
-    try {
-      const { svg, stats: st } = await generateIllustration(d, (svgPart, chars) =>
-        setDrawing((prev) => (prev ? { ...prev, svg: svgPart ?? prev.svg, chars } : prev)),
-      );
-      setMessages((prev) => [...prev, { id: uid(), role: 'assistant', content: `[일러스트: ${d}]`, svg }]);
-      setStats(st);
-    } catch (e: any) {
-      Alert.alert('그리기 오류', String(e?.message ?? e));
-    } finally {
-      deactivateKeepAwake('draw');
-      setDrawing(null);
-    }
-  };
-
   /** 첨부 사진의 글자만 바로 보여 준다 (Gemma 를 거치지 않음) */
   const readTextOnly = async () => {
     if (!pendingImage || busy) return;
@@ -414,36 +206,23 @@ export function ChatScreen({ model, settings, gpuInfo, initialInput = '', onChan
     ]);
   };
 
-  drawRef.current = draw;
-
-  /** 채팅으로 물어본 그림체에 답했을 때 (버튼 또는 입력) */
-  const chooseStyle = (msgId: string, styleId: string, typed?: string) => {
-    const ask = messages.find((m) => m.id === msgId);
-    if (!ask?.choiceFor || busy) return;
-    const style = getDrawStyle(styleId);
-    setMessages((prev) => [
-      ...prev.map((m) => (m.id === msgId ? { ...m, choices: undefined } : m)),
-      { id: uid(), role: 'user', content: typed ?? style.label },
-    ]);
-    drawWithModel(ask.choiceFor, style, false);
-  };
-
   const send = async () => {
     const text = input.trim();
     if (!canSend || busy) return;
-    // 그림체를 물어본 직후의 답이면 그 그림체로 그린다. 상관없는 말이면 질문을 접고 평소처럼 대화한다
-    const last = messages[messages.length - 1];
-    if (last?.choices && last.choiceFor && !pendingImage) {
-      const st = DRAW_STYLES.find((x) => x.keywords.test(text) || text.includes(x.label));
-      if (st) {
-        setInput('');
-        return chooseStyle(last.id, st.id, text);
-      }
-      setMessages((prev) => prev.map((m) => (m.id === last.id ? { ...m, choices: undefined } : m)));
-    }
-    // "…그려줘", "그림/이미지/사진 … 만들어줘" 는 그림 그리기로 보낸다 (사진 첨부가 없을 때)
+    // 그림 요청은 모델이 그린 척 하지 않도록 바로 안내한다 (그림 기능은 앱 용량·메모리 부담으로 뺐다)
     if (!pendingImage && DRAW_INTENT.test(text)) {
-      return draw(text);
+      followLatest.current = true;
+      setInput('');
+      setMessages((prev) => [
+        ...prev,
+        { id: uid(), role: 'user', content: text },
+        {
+          id: uid(),
+          role: 'assistant',
+          content: '이 앱은 그림을 그리지 않아요. 대신 어떤 그림을 그리면 좋을지 구도·색감을 설명하거나, 사진을 보여 주시면 무엇이 있는지 알려 드릴 수 있어요.',
+        },
+      ]);
+      return;
     }
     const userMsg: ChatMessage = {
       id: uid(),
@@ -512,9 +291,7 @@ export function ChatScreen({ model, settings, gpuInfo, initialInput = '', onChan
   const data: ChatMessage[] =
     streaming !== null
       ? [...messages, { id: '__streaming__', role: 'assistant', content: streaming || '…' }]
-      : drawing !== null
-        ? [...messages, { id: '__drawing__', role: 'assistant', content: '', svg: drawing.svg ?? '' }]
-        : messages;
+      : messages;
 
   const upgradeTransfer = upgradeDl?.progress?.transfer;
   const upgradeDetail = upgradeDl?.progress?.detail ?? (upgradeTransfer
@@ -526,10 +303,6 @@ export function ChatScreen({ model, settings, gpuInfo, initialInput = '', onChan
   const openPreview = (media: ImagePreview) => {
     Keyboard.dismiss();
     setPreview(media);
-  };
-  const draftIllustration = () => {
-    if (!input.trim()) setInput('별빛이 비치는 바닷가를 그려줘');
-    inputRef.current?.focus();
   };
   const scrollToLatest = () => {
     if (followLatest.current && data.length > 0) listRef.current?.scrollToEnd({ animated: false });
@@ -576,7 +349,6 @@ export function ChatScreen({ model, settings, gpuInfo, initialInput = '', onChan
               </Pressable>
               <View style={styles.sidebarActions}>
                 <ChatAction icon="📷" label="사진으로 질문" onPress={attach} disabled={busy} />
-                <ChatAction icon="🎨" label="일러스트 그리기" onPress={draftIllustration} disabled={busy} />
                 <ChatAction icon="⚙" label="설정" onPress={openSettings} disabled={busy} />
               </View>
               <View style={styles.modelInfo}>
@@ -645,21 +417,6 @@ export function ChatScreen({ model, settings, gpuInfo, initialInput = '', onChan
                 </Pressable>
               </View>
             ) : null}
-            {imageModel.status.kind === 'downloading' ? (
-              <View style={styles.dlBar}>
-                <View style={styles.flex}>
-                  <Text style={styles.dlText} numberOfLines={1}>
-                    그림 모델 {describeImageModel(imageModel.status)}
-                  </Text>
-                  <View style={styles.dlTrack}>
-                    <View style={[styles.dlFill, { width: `${Math.round((imageModel.status.progress?.ratio ?? 0) * 100)}%` }]} />
-                  </View>
-                </View>
-                <Pressable onPress={imageModel.cancelDownload} style={styles.hBtn}>
-                  <Text style={[styles.hBtnText, { color: colors.danger }]}>취소</Text>
-                </Pressable>
-              </View>
-            ) : null}
 
             <FlatList
               ref={listRef}
@@ -687,53 +444,19 @@ export function ChatScreen({ model, settings, gpuInfo, initialInput = '', onChan
                   {!showSidebar ? (
                     <View style={[styles.shortcuts, narrow && styles.stackedShortcuts]}>
                       <ChatAction icon="📷" label="사진으로 질문" onPress={attach} />
-                      <ChatAction icon="🎨" label="일러스트 그리기" onPress={draftIllustration} />
                     </View>
                   ) : null}
                 </View>
               }
               renderItem={({ item }) => (
                 <View style={[styles.bubble, item.role === 'user' ? styles.userBubble : styles.botBubble]}>
-                  {item.id === '__drawing__' && drawing?.phase ? (
-                    <View style={styles.drawProgress}>
-                      <Text style={styles.msg}>🎨 {drawing.phase}</Text>
-                      {drawing.progress != null ? (
-                        <View style={styles.dlTrack}>
-                          <View style={[styles.dlFill, { width: `${Math.round(drawing.progress * 100)}%` }]} />
-                        </View>
-                      ) : null}
-                    </View>
-                  ) : item.id === '__drawing__' && drawing ? (
-                    drawing.svg ? (
-                      <SvgCard svg={drawing.svg} size={mediaSize} live caption={`그리는 중… (${drawing.chars}자)`} />
-                    ) : (
-                      <Text style={styles.msg}>🎨 그림을 구상하는 중… ({drawing.chars}자)</Text>
-                    )
-                  ) : item.role === 'assistant' && item.picture ? (
+                  {item.role === 'assistant' && item.picture ? (
                     <PictureCard
                       uri={item.picture}
                       size={mediaSize}
                       caption={item.content.replace(/^\[그림: (.*)\]$/, '$1')}
                       onOpen={(uri) => openPreview({ uri, title: '생성한 그림' })}
                     />
-                  ) : item.role === 'assistant' && item.choices?.length ? (
-                    <View style={{ gap: 10 }}>
-                      <Markdown text={item.content} />
-                      {item.id === messages[messages.length - 1]?.id && !busy ? (
-                        <View style={styles.choiceRow}>
-                          {item.choices.map((c) => (
-                            <Pressable
-                              key={c.id}
-                              accessibilityRole="button"
-                              style={styles.choiceChip}
-                              onPress={() => chooseStyle(item.id, c.id)}
-                            >
-                              <Text style={styles.choiceText}>{c.label}</Text>
-                            </Pressable>
-                          ))}
-                        </View>
-                      ) : null}
-                    </View>
                   ) : item.role === 'assistant' && item.svg ? (
                     <SvgCard
                       svg={item.svg}
@@ -828,18 +551,9 @@ export function ChatScreen({ model, settings, gpuInfo, initialInput = '', onChan
                     <Text style={styles.attachText}>📷</Text>
                   </Pressable>
                   <Pressable
-                    style={[styles.attach, busy && styles.off]}
-                    onPress={() => draw(input)}
-                    disabled={busy}
-                    accessibilityRole="button"
-                    accessibilityLabel="일러스트 그리기"
-                  >
-                    <Text style={styles.attachText}>🎨</Text>
-                  </Pressable>
-                  <Pressable
                     accessibilityRole="button"
                     style={[styles.send, busy && { backgroundColor: colors.danger }, !busy && !canSend && styles.off]}
-                    onPress={busy ? () => (drawing?.phase ? cancelImageGen() : stopGeneration()) : send}
+                    onPress={busy ? () => stopGeneration() : send}
                     disabled={!busy && !canSend}
                   >
                     <Text style={styles.sendText}>{busy ? '중지' : '전송'}</Text>
@@ -870,14 +584,6 @@ export function ChatScreen({ model, settings, gpuInfo, initialInput = '', onChan
           visionStatus={vision.status}
           onDownloadVision={vision.download}
           onRemoveVision={vision.remove}
-          imageModelStatus={imageModel.status}
-          onDownloadImageModel={imageModel.download}
-          onRemoveImageModel={imageModel.remove}
-          imageModelUpdate={imageModel.update}
-          onReplaceImageModel={() => {
-            setShowSettings(false);
-            imageModel.replace();
-          }}
           upgrade={upgrade}
           upgrading={!!upgradeDl}
           onUpgrade={() => {
@@ -933,11 +639,6 @@ function SettingsModal({
   visionStatus,
   onDownloadVision,
   onRemoveVision,
-  imageModelStatus,
-  onDownloadImageModel,
-  onRemoveImageModel,
-  imageModelUpdate,
-  onReplaceImageModel,
   upgrade,
   upgrading,
   onUpgrade,
@@ -950,11 +651,6 @@ function SettingsModal({
   visionStatus: VisionStatus;
   onDownloadVision: () => void;
   onRemoveVision: () => void;
-  imageModelStatus: ImageModelStatus;
-  onDownloadImageModel: () => void;
-  onRemoveImageModel: () => void;
-  imageModelUpdate: ImageModelUpdate | null;
-  onReplaceImageModel: () => void;
   upgrade: ModelUpgrade | null;
   upgrading: boolean;
   onUpgrade: () => void;
@@ -1072,38 +768,7 @@ function SettingsModal({
 
         <MemorySection visible />
 
-        <StorageSection visible busy={upgrading || visionStatus.kind === 'downloading' || imageModelStatus.kind === 'downloading'} />
-
-        {imageModelStatus.kind !== 'unsupported' ? (
-          <>
-            <Text style={[styles.label, { marginTop: 24 }]}>그림 모델</Text>
-            <Text style={styles.hint}>{describeImageModel(imageModelStatus)}</Text>
-            {imageModelStatus.kind === 'missing' ? (
-              <Pressable style={[styles.send, { marginTop: 8 }]} onPress={onDownloadImageModel}>
-                <Text style={styles.sendText}>그림 모델 받기 ({imageModelSizeText(imageModelStatus.size)})</Text>
-              </Pressable>
-            ) : imageModelStatus.kind === 'ready' && imageModelUpdate ? (
-              <Pressable style={[styles.send, { marginTop: 8 }]} onPress={onReplaceImageModel}>
-                <Text style={styles.sendText}>새 그림 모델로 교체 (일러스트·애니 특화)</Text>
-              </Pressable>
-            ) : imageModelStatus.kind === 'ready' ? (
-              <Pressable
-                style={[styles.send, { backgroundColor: colors.border, marginTop: 8 }]}
-                onPress={() =>
-                  Alert.alert('그림 모델 삭제', '그림 모델을 지워 공간을 비웁니다. 다시 그리려면 다시 받아야 합니다.', [
-                    { text: '취소', style: 'cancel' },
-                    { text: '삭제', style: 'destructive', onPress: onRemoveImageModel },
-                  ])
-                }
-              >
-                <Text style={[styles.sendText, { color: colors.text }]}>그림 모델 삭제</Text>
-              </Pressable>
-            ) : null}
-            <Text style={[styles.hint, { marginTop: 6 }]}>
-              Counterfeit-V3.0 (Stable Diffusion 1.5 기반 일러스트·애니 모델, Core ML), CreativeML OpenRAIL-M 라이선스. 모든 그림은 기기 안에서 만들어집니다.
-            </Text>
-          </>
-        ) : null}
+        <StorageSection visible busy={upgrading || visionStatus.kind === 'downloading'} />
 
         <Text style={[styles.label, { marginTop: 24 }]}>모델</Text>
         <Text style={styles.hint}>

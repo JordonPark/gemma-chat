@@ -42,6 +42,7 @@ const config: ExpoConfig = {
   // 1.4.0: iOS 기기 그림 생성 모듈(modules/expo-sd: Apple Core ML Stable Diffusion)
   // 1.5.0: iPhone Duo 접힘 영역 및 iOS 가로 화면 지원
   // 1.6.0: 스토어 빌드 및 iOS 그림 안전 검사 필수화
+  //        이후 그림 그리기 기능과 modules/expo-sd 제거 (JS 는 기존 1.6.0 빌드와도 호환)
   version: release.version,
   orientation: 'portrait',
   icon: './assets/icon.png',
@@ -78,7 +79,7 @@ const config: ExpoConfig = {
       LSSupportsOpeningDocumentsInPlace: true,
       ITSAppUsesNonExemptEncryption: false,
       // 공유 시트의 "이미지 저장"으로 일러스트를 사진 앱에 저장할 때 필요
-      NSPhotoLibraryAddUsageDescription: '그린 일러스트를 사진 앱에 저장합니다.',
+      NSPhotoLibraryAddUsageDescription: '공유 메뉴에서 이미지를 사진 앱에 저장할 때 사용합니다.',
     },
   },
   android: {

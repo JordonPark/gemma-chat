@@ -3,7 +3,6 @@
  */
 import { Platform } from 'react-native';
 import { initLlama, type LlamaContext, type RNLlamaOAICompatibleMessage } from 'llama.rn';
-import { SCENE_SCHEMA, parseScene, renderPartialScene, renderScene, scenePrompt } from './scene';
 import { ContentSafetyError, SAFETY_GUIDE, SAFETY_REFUSAL, SAFETY_SCHEMA, safetyPasses, safetySegments } from './contentSafety';
 import { UNIT_IDS, contextForPrompt, todayLine, type ToolCall } from './tools';
 
@@ -291,129 +290,6 @@ function stripStop(s: string) {
     if (i >= 0) out = out.slice(0, i);
   }
   return out;
-}
-
-// ───────────────────────── 일러스트 ─────────────────────────
-
-/**
- * 설명을 받아 일러스트를 그린다.
- * Gemma 는 부품 목록(JSON, 스키마로 강제: 12~45개)만 정하고, 앱(scene.ts)이 일정한 그림체로 그린다.
- * 그리는 중간중간 onPartial 로 지금까지의 부품으로 그린 SVG 를 넘겨 준다.
- */
-export async function generateIllustration(
-  description: string,
-  onPartial: (svg: string | null, rawLength: number) => void,
-): Promise<{ svg: string; stats: GenStats }> {
-  const c = ctx;
-  if (!c) throw new Error('모델이 로드되지 않았습니다.');
-
-  await checkGeneratedContent(description, 'illustration request');
-  await c.clearCache(false);
-  let acc = '';
-  let lastEmit = 0;
-  const res = await c.completion(
-    {
-      messages: [{ role: 'user', content: scenePrompt(description) }],
-      jinja: true,
-      n_predict: 2400,
-      temperature: 0.5,
-      top_k: 40,
-      top_p: 0.9,
-      stop: STOP_WORDS,
-      response_format: { type: 'json_schema', json_schema: { strict: true, schema: SCENE_SCHEMA } },
-    },
-    (data) => {
-      acc += data.token;
-      const now = Date.now();
-      if (now - lastEmit < 300) return; // 미리보기는 0.3초마다
-      lastEmit = now;
-      onPartial(renderPartialScene(acc), acc.length);
-    },
-  );
-  await c.clearCache(false);
-
-  const raw = stripStop(res.content || res.text || acc);
-  // 중지했거나 잘렸으면 완성된 부품까지만 그린다
-  const scene = parseScene(raw);
-  const svg = scene ? renderScene(scene) : renderPartialScene(raw);
-  if (!svg) throw new Error('그림을 만들지 못했습니다. 설명을 조금 바꿔 다시 시도해 보세요.');
-  return {
-    svg,
-    stats: {
-      tokens: res.timings?.predicted_n ?? 0,
-      tokPerSec: res.timings?.predicted_per_second ?? 0,
-      interrupted: !!res.interrupted,
-    },
-  };
-}
-
-// ───────────────────────── 그림 생성용 프롬프트 ─────────────────────────
-
-/**
- * 한국어 요청을 Stable Diffusion 용 영어 프롬프트(주제·자세·배경)로 바꾼다. 그림체 단어는 앱이 붙인다.
- */
-/** 그림 모델에 넘길 영어 프롬프트. people=false 면 사람을 그리지 않도록 막는다 */
-export type ImagePrompt = { prompt: string; people: boolean };
-
-export async function makeImagePrompt(description: string, photoContext?: string): Promise<ImagePrompt> {
-  const c = ctx;
-  if (!c) throw new Error('모델이 로드되지 않았습니다.');
-  await checkGeneratedContent([description, photoContext].filter(Boolean).join('\n'), 'illustration request');
-  await c.clearCache(false);
-  const res = await c.completion({
-    messages: [
-      {
-        role: 'user',
-        content: [
-          'Rewrite this picture request as a Stable Diffusion prompt in English.',
-          `Request (may be in Korean): ${description.trim()}`,
-          ...(photoContext
-            ? [`The request refers to a photo the user shared earlier. Description of that photo: ${photoContext.trim()}`]
-            : []),
-          '',
-          'subject: the main thing to draw, 1-4 English words, exactly what was asked (e.g. "pepperoni pizza", "orange cat", "lighthouse").',
-          'details: comma-separated phrases (10 to 30 words) describing ONLY that subject and its setting: shape, colors, materials, lighting, background.',
-          'Draw exactly what was requested. Do NOT add people, characters or faces unless the request asks for a person/character; food, objects, animals and places are drawn alone.',
-          'Do NOT mention art style, medium, quality or camera words (they are added automatically).',
-          'people: true only if the request asks for a person or human-like character. If so describe a fictional character and keep it wholesome.',
-        ].join('\n'),
-      },
-    ],
-    jinja: true,
-    n_predict: 200,
-    temperature: 0.3,
-    top_k: 40,
-    top_p: 0.9,
-    stop: STOP_WORDS,
-    response_format: {
-      type: 'json_schema',
-      json_schema: {
-        strict: true,
-        schema: {
-          type: 'object',
-          properties: { subject: { type: 'string' }, details: { type: 'string' }, people: { type: 'boolean' } },
-          required: ['subject', 'details', 'people'],
-          additionalProperties: false,
-        },
-      },
-    },
-  });
-  await c.clearCache(false);
-  const raw = stripStop(res.content || res.text || '');
-  let imagePrompt: ImagePrompt;
-  try {
-    const j = JSON.parse(raw.slice(raw.indexOf('{'), raw.lastIndexOf('}') + 1));
-    const subject = String(j.subject ?? '').trim();
-    const details = String(j.details ?? '').trim();
-    // CLIP은 앞쪽 낱말을 더 강하게 반영한다.
-    const prompt = [subject && `a ${subject}`, details].filter(Boolean).join(', ');
-    imagePrompt = { prompt: prompt.replace(/\s+/g, ' ').slice(0, 400), people: j.people === true };
-  } catch {
-    throw new Error('그림 설명을 안전하게 준비하지 못했습니다.');
-  }
-  if (!imagePrompt.prompt) throw new Error('그림 설명을 준비하지 못했습니다.');
-  await checkGeneratedContent(imagePrompt.prompt, 'image prompt');
-  return imagePrompt;
 }
 
 // ───────────────────────── 기기 도구 고르기 (계산기·날짜·단위 변환·기억)

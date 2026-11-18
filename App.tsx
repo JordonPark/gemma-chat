@@ -8,6 +8,7 @@ import { getFoldInsets } from './src/foldLayout';
 import { LegalConsent } from './src/LegalInfo';
 import { LoadingScreen } from './src/LoadingScreen';
 import { SetupScreen } from './src/SetupScreen';
+import { removeLegacyImageModel } from './src/legacyDrawing';
 import { loadModel, unloadModel, type Settings } from './src/llm';
 import { deleteInstalledModels, findInstalledModel, type InstalledModel } from './src/modelStore';
 import { acceptModelTerms, hasAcceptedModelTerms, loadSettings, saveSettings } from './src/storage';
@@ -54,6 +55,11 @@ export default function App() {
     },
     [holdSplash],
   );
+
+  // 예전 버전에서 받은 그림 모델(그림 기능은 뺐다)이 있으면 지워 공간을 돌려준다
+  useEffect(() => {
+    removeLegacyImageModel();
+  }, []);
 
   useEffect(() => {
     if (!acceptedTerms) return;

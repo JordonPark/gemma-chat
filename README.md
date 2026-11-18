@@ -124,26 +124,11 @@ Gemma 3 4B는 이미지를 이해하는 모델입니다. 비전 프로젝터(`mm
 - 이미지 인식 파일(0.85GB)이 없거나 꺼져 있어도, 사진의 **글자**로는 답할 수 있습니다.
 - 코드는 `modules/expo-ocr`에 있는 로컬 Expo 모듈입니다(Swift와 Kotlin, 각 100줄 안팎).
 
-## 2-2. 그림 그리기
+## 2-2. 그림 그리기 (뺐음)
 
-입력창에 그릴 내용을 적고 **🎨**를 누르거나, "…그려줘", "…일러스트 만들어줘"라고 보냅니다.
-
-### iPhone: 그림 모델 (Stable Diffusion, 기기 안에서 생성)
-- **모델:** **Counterfeit-V3.0**을 씁니다. Stable Diffusion 1.5 기반의 일러스트·애니 특화 모델입니다. *Actions › Convert image model to 6-bit*가 원본 가중치를 Apple `ml-stable-diffusion`으로 Core ML(`split_einsum_v2`)로 변환하고, Unet·텍스트 인코더·안전 검사기(SafetyChecker)를 **6bit 팔레트로 압축**해 Release에 올립니다. 크기는 약 1.1GB(16bit 변환본 2.5GB). 이전 그림 모델이 있으면 **설정 › 그림 모델 › 새 그림 모델로 교체**로 바꿀 수 있습니다.
-- **처음 설치:** 한 번에 1/3 채팅 모델 → 2/3 사진 인식(비전) → 3/3 그림 모델(iPhone만, 준비 1~3분 포함)을 받습니다. Android는 1/2 채팅 → 2/2 사진 인식. 글자 읽기(OCR)는 기기 내장이라 받을 것이 없습니다. 받을 용량은 Release의 manifest를 읽어 화면에 표시합니다. 사진 인식·그림 모델이 실패하거나 취소돼도 채팅은 바로 시작하고, 그 기능을 처음 쓸 때 다시 받습니다.
-- **그림체:** 요청에 그림체를 말하면("픽셀아트로 …") 바로 그리고, 말하지 않으면 채팅으로 **"어떤 그림체로 그릴까요?"**라고 묻습니다. 버튼으로 고르거나 "애니로"처럼 답하면 됩니다. 그림체는 애니·웹툰, 3D 애니메이션, 플랫 일러스트, 색연필, 픽셀아트, 사진처럼, 수채화 동화 중에서 고릅니다(`src/imageGen.ts`의 `DRAW_STYLES`).
-- **흐름:**
-  1. Gemma가 한국어 요청을 영어 장면 묘사로 바꿉니다.
-  2. 앱이 고른 그림체 문구와 제외 문구를 붙입니다.
-  3. 채팅 모델을 잠시 내리고 25단계로 그립니다(512×512).
-  4. 그림이 끝나면 채팅 모델을 다시 불러옵니다.
-- **시간:** Neural Engine용 준비(컴파일)는 기기마다 한 번만 하고 iOS가 캐시합니다. 모델을 다 받으면 바로 이 준비(1~3분)까지 끝내 두기 때문에, 첫 그림부터 기다림 없이 그립니다. 한 장에 수십 초 정도 걸릴 것으로 예상합니다.
-- **안전 검사:** Apple 파이프라인의 안전 검사(Safety Checker)를 켜 두었습니다.
-- **소스:** `modules/expo-sd`에 Apple [ml-stable-diffusion](https://github.com/apple/ml-stable-diffusion)(MIT)의 Swift 소스를 포함했습니다. SD3·T5 파일은 뺐습니다(`ios/StableDiffusion/VENDORED.md`).
-- **모델 라이선스:** CreativeML OpenRAIL-M(Counterfeit-V3.0, SD 1.5). 사용 제한 조항을 따라야 합니다.
-
-### Android: 도형 일러스트
-Gemma가 **부품 목록**(머리, 귀, 눈, 몸통 등)을 JSON 스키마로 정하고, 앱(`src/scene.ts`)이 외곽선 있는 플랫 일러스트로 그립니다.
+그림 그리기(iPhone: Stable Diffusion 그림 모델, Android: 도형 일러스트)는 **앱 용량과 메모리 부담 때문에 뺐습니다.**
+"…그려줘" 같은 요청에는 그림을 그리지 않는다고 안내합니다. 예전 버전에서 받은 그림 모델(`Documents/sd`, 약 1~2.5GB)은 앱을 열 때 자동으로 지웁니다.
+예전 대화에 있던 그림은 그대로 보이고, 새 대화를 시작하면 지워집니다. Release의 `sd*.json`·그림 모델 파일과 관련 워크플로(`publish-sd.yml`, `convert-sd-6bit.yml`)는 기록용으로 남겨 두었습니다.
 
 ## 2-3. 기기 도구 (계산기 · 날짜 · 단위 변환 · 기억)
 
@@ -259,11 +244,8 @@ src/Markdown.tsx        답변 Markdown 렌더링 (의존성 없음)
 src/UpdateBanner.tsx    OTA 업데이트 배너·확인
 src/vision.ts           mmproj 다운로드, 카메라·앨범 사진 선택과 축소
 src/useVision.ts        이미지 인식 상태(받기·켜기·끄기)
-src/scene.ts            도형 일러스트(Android): 부품 JSON 스키마·프롬프트, 부품 → SVG
-src/imageGen.ts         그림 모델(iOS) 다운로드·압축 해제, 수채화 동화풍 프롬프트, 생성
-src/useImageModel.ts    그림 모델 설치 상태
-modules/expo-sd/        iOS Core ML Stable Diffusion 네이티브 모듈
-src/SvgCard.tsx         일러스트 표시, PNG 저장·공유
+src/SvgCard.tsx         예전 대화의 일러스트 표시, PNG 저장·공유
+src/legacyDrawing.ts    예전 그림 모델·그림 파일 정리
 modules/expo-ocr/       기기 OCR 네이티브 모듈 (iOS Vision / Android ML Kit 한국어)
 tools/pack_model.sh     PC: HF git 저장소에서 받아 분할
 tools/split_model.py    분할 + SHA256SUMS + manifest.json

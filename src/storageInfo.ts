@@ -19,8 +19,7 @@ export function storageBreakdown(): { items: StorageItem[]; total: number; free:
   const items: StorageItem[] = [
     { key: 'models', label: '채팅 모델 (Gemma 3 4B)', bytes: dirSize('models') },
     { key: 'vision', label: '이미지 인식 파일', bytes: dirSize('vision') },
-    { key: 'sd', label: '그림 모델 (Stable Diffusion)', bytes: dirSize('sd') },
-    { key: 'media', label: '대화 사진·그림', bytes: dirSize('chat-images') + dirSize('pictures') },
+    { key: 'media', label: '대화 사진', bytes: dirSize('chat-images') + dirSize('pictures') },
     { key: 'temp', label: '임시 파일 (받다 만 파일 등)', bytes: TEMP_DIRS.reduce((s, n) => s + dirSize(n), 0) },
   ].filter((i) => i.bytes > 0);
   return { items, total: items.reduce((s, i) => s + i.bytes, 0), free: Paths.availableDiskSpace };
