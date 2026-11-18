@@ -81,5 +81,9 @@ jobs:
             ID=$(echo "$OUT" | grep -o '"id":"[^"]*"' | head -1)
             AT=$(echo "$OUT" | grep -o '"createdAt":"[^"]*"' | head -1)
             CODE=$(echo "$OUT" | tail -1)
+            if [ "$CODE" != 'HTTP 200' ] || [ -z "$ID" ]; then
+              echo "::error title=OTA $P runtime $RV::No update manifest received ($CODE)."
+              exit 1
+            fi
             echo "::notice title=OTA $P runtime $RV::$CODE $ID $AT"
           done
