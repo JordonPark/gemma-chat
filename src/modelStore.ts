@@ -30,6 +30,7 @@ export type ImportStage =
   | 'copying'
   | 'unzipping'
   | 'verifying'
+  | 'preparing'
   | 'done';
 export type ImportProgress = { stage: ImportStage; ratio: number; detail?: string };
 export type OnProgress = (p: ImportProgress) => void;

@@ -20,9 +20,40 @@ import { RangedCancelled, downloadRanged } from './rangedDownload';
 
 export { cancelImageGen, isImageGenAvailable };
 
-type SdManifest = { format: number; name: string; size: number; sha256: string };
+type SdManifest = { format: number; id?: string; name: string; size: number; sha256: string; model?: string };
 
 const sdDir = () => new Directory(Paths.document, 'sd');
+/** 설치된 그림 모델 정보 (sd.json 의 id/name/model). 표시가 없으면 처음 배포했던 기본 SD 1.5 */
+const markerFile = () => new File(sdDir(), '.model.json');
+
+export function installedImageModelId(): string | null {
+  if (!findInstalledImageModel()) return null;
+  try {
+    const f = markerFile();
+    return f.exists ? (JSON.parse(f.textSync()).id as string) ?? 'sd15' : 'sd15';
+  } catch {
+    return 'sd15';
+  }
+}
+
+export type ImageModelUpdate = { id: string; size: number; model: string };
+
+/** Release 의 그림 모델이 설치된 것과 다르면 그 정보를 돌려준다 (오프라인이면 null) */
+export async function checkImageModelUpdate(): Promise<ImageModelUpdate | null> {
+  const installed = installedImageModelId();
+  if (!installed) return null;
+  const ac = new AbortController();
+  const timer = setTimeout(() => ac.abort(), 15_000);
+  try {
+    const m = await fetchSdManifest(ac.signal);
+    const id = m.id ?? 'sd15';
+    return id !== installed ? { id, size: m.size, model: m.model ?? m.name } : null;
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timer);
+  }
+}
 const picturesDir = () => new Directory(Paths.document, 'pictures');
 
 /** 리소스 폴더(Unet.mlmodelc 가 있는 폴더)를 찾는다 */
@@ -55,7 +86,7 @@ export function trimImageModel() {
   if (!r) return;
   const enc = new Directory(r, 'VAEEncoder.mlmodelc');
   if (enc.exists) enc.delete();
-  for (const e of dir.list()) if (e instanceof File && e.name.startsWith('.')) e.delete();
+  for (const e of dir.list()) if (e instanceof File && e.name.startsWith('.') && e.name !== '.model.json') e.delete();
 }
 
 export function deleteImageModel() {
@@ -135,6 +166,13 @@ export async function downloadImageModel(onProgress: OnProgress, signal: AbortSi
   if (!res) {
     deleteImageModel();
     throw new Error('압축을 풀었지만 그림 모델 파일을 찾지 못했습니다.');
+  }
+  try {
+    const mk = markerFile();
+    if (!mk.exists) mk.create();
+    mk.writeSync(JSON.stringify({ id: m.id ?? 'sd15', name: m.name, sha256: m.sha256, model: m.model ?? '' }));
+  } catch {
+    // 표시를 못 써도 그림은 그릴 수 있다
   }
   onProgress({ stage: 'done', ratio: 1 });
   return res;

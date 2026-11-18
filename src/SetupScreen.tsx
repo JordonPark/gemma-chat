@@ -13,6 +13,11 @@ import {
   type InstalledModel,
 } from './modelStore';
 import { DownloadCancelled, downloadModel, hasPartialDownload } from './modelDownload';
+import { downloadImageModel, findInstalledImageModel, isImageGenAvailable, prepareImageModel } from './imageGen';
+
+/** iPhone(그림 모델 지원)이면 처음 설치 때 그림 모델도 같이 받는다 */
+const WITH_IMAGE_MODEL = isImageGenAvailable();
+const SIZE_TEXT = WITH_IMAGE_MODEL ? '약 4.5GB: 채팅 2.4GB + 그림 2.1GB' : '약 2.4GB';
 import { colors } from './theme';
 
 const STAGE_LABEL: Record<ImportProgress['stage'], string> = {
@@ -22,6 +27,7 @@ const STAGE_LABEL: Record<ImportProgress['stage'], string> = {
   copying: '모델 복사 중',
   unzipping: '압축 해제 중',
   verifying: '무결성(SHA-256) 검사 중',
+  preparing: '그림 모델 준비 중',
   done: '완료',
 };
 
@@ -48,7 +54,23 @@ export function SetupScreen({ onInstalled }: { onInstalled: (m: InstalledModel) 
     setLastError(null);
     await activateKeepAwakeAsync('download'); // 다운로드 중 화면 꺼짐(→ 앱 일시정지) 방지
     try {
-      const m = await downloadModel(setProgress, ac.signal);
+      const withImage = WITH_IMAGE_MODEL && !findInstalledImageModel();
+      const m = await downloadModel(
+        (p) => setProgress(withImage ? { ...p, detail: `1/2 채팅 모델 · ${p.detail ?? ''}` } : p),
+        ac.signal,
+      );
+      // 그림 모델도 이어서 받고 미리 준비한다. 실패·취소해도 채팅은 바로 시작하고, 그림 모델은 나중에 받을 수 있다
+      if (withImage && !ac.signal.aborted) {
+        try {
+          await downloadImageModel((p) => setProgress({ ...p, detail: `2/2 그림 모델 · ${p.detail ?? ''}` }), ac.signal);
+          setProgress({ stage: 'preparing', ratio: 1, detail: '이 기기에서 한 번만, 1~3분 걸립니다' });
+          await prepareImageModel();
+        } catch (e: any) {
+          if (!(e instanceof DownloadCancelled) && !ac.signal.aborted) {
+            Alert.alert('그림 모델은 나중에 받을 수 있어요', `채팅은 바로 시작합니다. 그림은 처음 그릴 때 다시 받습니다.\n(${e?.message ?? e})`);
+          }
+        }
+      }
       onInstalled(m);
     } catch (e: any) {
       if (!(e instanceof DownloadCancelled)) {
@@ -68,7 +90,7 @@ export function SetupScreen({ onInstalled }: { onInstalled: (m: InstalledModel) 
   const onDownloadPress = async () => {
     const net = await Network.getNetworkStateAsync().catch(() => null);
     if (net?.type === Network.NetworkStateType.CELLULAR) {
-      Alert.alert('모바일 데이터 사용', '약 2.4GB를 모바일 데이터로 받습니다. 계속할까요? (Wi-Fi 권장)', [
+      Alert.alert('모바일 데이터 사용', `${SIZE_TEXT}를 모바일 데이터로 받습니다. 계속할까요? (Wi-Fi 권장)`, [
         { text: '취소', style: 'cancel' },
         { text: '받기', onPress: () => startDownload() },
       ]);
@@ -131,7 +153,7 @@ export function SetupScreen({ onInstalled }: { onInstalled: (m: InstalledModel) 
       </View>
       <Text style={styles.title}>Gemma Chat</Text>
       <Text style={styles.sub}>
-        처음 한 번만 모델(약 2.4GB)을 내려받습니다. 그 뒤 대화는 인터넷 없이 이 기기 안에서만 처리됩니다.
+        처음 한 번만 모델({SIZE_TEXT})을 내려받습니다. 그 뒤 대화와 그림은 인터넷 없이 이 기기 안에서만 처리됩니다.
       </Text>
 
       {busy ? (
@@ -164,7 +186,7 @@ export function SetupScreen({ onInstalled }: { onInstalled: (m: InstalledModel) 
           </Text>
           {lastError ? <Text style={[styles.muted, { color: colors.danger }]}>{lastError}</Text> : null}
           <Pressable style={styles.btn} onPress={onDownloadPress}>
-            <Text style={styles.btnText}>{hasPartialDownload() ? '이어서 받기' : '모델 다운로드 (약 2.4GB)'}</Text>
+            <Text style={styles.btnText}>{hasPartialDownload() ? '이어서 받기' : `모델 다운로드 (${SIZE_TEXT})`}</Text>
           </Pressable>
         </View>
       )}
