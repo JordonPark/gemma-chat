@@ -4,6 +4,7 @@
 import { Platform } from 'react-native';
 import { initLlama, type LlamaContext, type RNLlamaOAICompatibleMessage } from 'llama.rn';
 import { SCENE_SCHEMA, parseScene, renderPartialScene, renderScene, scenePrompt } from './scene';
+import { UNIT_IDS, contextForPrompt, todayLine, type ToolCall } from './tools';
 
 export type Role = 'user' | 'assistant';
 /**
@@ -24,6 +25,8 @@ export type ChatMessage = {
   choices?: { id: string; label: string }[];
   /** 선택지가 무엇을 위한 것인지 (그림체 질문이면 그릴 내용) */
   choiceFor?: string;
+  /** 기기 도구(계산기·날짜·단위·기억)를 쓴 결과 (사용자 메시지에만). note 는 모델에게, chip 은 화면에 */
+  tool?: { note: string; chip: string };
 };
 
 const OCR_MAX_CHARS = 2000;
@@ -149,6 +152,7 @@ async function fitHistory(c: LlamaContext, history: ChatMessage[], budget: numbe
       (await c.tokenize(history[i].content)).tokens.length +
       8 + // 턴 구분 토큰 여유분
       (history[i].image ? IMAGE_TOKENS : 0) +
+      (history[i].tool ? 60 : 0) +
       (history[i].ocr ? Math.min(history[i].ocr!.length, OCR_MAX_CHARS) : 0); // OCR 글자 (한글은 대략 글자당 1토큰)
     if (used + n > budget && kept.length > 0) break;
     kept.unshift(history[i]);
@@ -169,7 +173,9 @@ export async function generateReply(
   const c = ctx;
   if (!c) throw new Error('모델이 로드되지 않았습니다.');
 
-  const sysTokens = (await c.tokenize(settings.systemPrompt)).tokens.length;
+  // 시스템 프롬프트 = 사용자 설정 + 오늘 날짜 + 기억해 둔 내용
+  const system = [settings.systemPrompt.trim(), contextForPrompt()].filter(Boolean).join('\n\n');
+  const sysTokens = (await c.tokenize(system)).tokens.length;
   const budget = Math.max(256, settings.nCtx - settings.maxNewTokens - sysTokens - 64);
   const turns = await fitHistory(c, history, budget);
 
@@ -181,7 +187,7 @@ export async function generateReply(
   }
   const lastImageIdx = visionReady ? turns.map((m) => !!m.image).lastIndexOf(true) : -1;
   const messages: RNLlamaOAICompatibleMessage[] = [
-    ...(settings.systemPrompt.trim() ? [{ role: 'system', content: settings.systemPrompt.trim() }] : []),
+    { role: 'system', content: system },
     ...turns.map((m, i): RNLlamaOAICompatibleMessage => {
       if (m.image && i === lastImageIdx) {
         return {
@@ -201,7 +207,10 @@ export async function generateReply(
         const what = m.content.replace(/^\[그림: (.*)\]$/, '$1');
         return { role: m.role, content: `(앱이 "${what}" 그림을 그려서 보여 줬습니다.)` };
       }
-      return { role: m.role, content: m.image ? `[사진] ${m.content}` : m.content };
+      const body = m.image ? `[사진] ${m.content}` : m.content;
+      // 기기 도구 결과: 모델이 직접 계산하지 말고 이 값을 쓰게 한다
+      if (m.tool) return { role: m.role, content: `${body}\n\n(앱 도구 결과 — 이 값을 그대로 믿고 답하세요: ${m.tool.note})` };
+      return { role: m.role, content: body };
     }),
   ];
 
@@ -343,4 +352,107 @@ export async function makeImagePrompt(description: string, photoContext?: string
     // 아래 기본값
   }
   return description.trim();
+}
+
+// ───────────────────────── 기기 도구 고르기 (계산기·날짜·단위 변환·기억)
+
+const TOOL_SCHEMA = {
+  anyOf: [
+    { type: 'object', properties: { tool: { const: 'none' } }, required: ['tool'], additionalProperties: false },
+    {
+      type: 'object',
+      properties: { tool: { const: 'calculator' }, expression: { type: 'string' } },
+      required: ['tool', 'expression'],
+      additionalProperties: false,
+    },
+    {
+      type: 'object',
+      properties: {
+        tool: { const: 'date' },
+        op: { enum: ['now', 'add', 'diff', 'weekday'] },
+        date: { type: 'string' },
+        days: { type: 'integer' },
+        target: { type: 'string' },
+      },
+      required: ['tool', 'op', 'date', 'days', 'target'],
+      additionalProperties: false,
+    },
+    {
+      type: 'object',
+      properties: { tool: { const: 'convert' }, value: { type: 'number' }, from: { enum: UNIT_IDS }, to: { enum: UNIT_IDS } },
+      required: ['tool', 'value', 'from', 'to'],
+      additionalProperties: false,
+    },
+    {
+      type: 'object',
+      properties: { tool: { const: 'remember' }, text: { type: 'string' } },
+      required: ['tool', 'text'],
+      additionalProperties: false,
+    },
+    {
+      type: 'object',
+      properties: { tool: { const: 'forget' }, text: { type: 'string' } },
+      required: ['tool', 'text'],
+      additionalProperties: false,
+    },
+  ],
+};
+
+const TOOL_GUIDE = [
+  'You route a chat message to an on-device tool. Output JSON only.',
+  'Tools:',
+  '- calculator {expression}: any arithmetic the answer needs (use + - * / ^ % ( ) sqrt). Turn words into math, e.g. "3만원의 15% 할인" -> "30000*(1-0.15)".',
+  '- date {op, date, days, target}: op "now" = current time; "add" = date plus days (negative for before; weeks*7, months ~ use calendar days); "diff" = days from date to target; "weekday" = weekday of date. Dates as YYYY-MM-DD, empty string means today. Unused fields: "" or 0.',
+  '- convert {value, from, to}: unit conversion. Units: ' + UNIT_IDS.join(', ') + ' (C/F/K = temperature, 평 = pyeong area).',
+  '- remember {text}: the user explicitly asks you to remember/save a fact. text = the fact, short, in the user\'s language.',
+  '- forget {text}: the user asks you to forget something. text = keywords of what to forget.',
+  '- none: anything else (general questions, chatting, math already done, recalling remembered facts).',
+  'Examples:',
+  '"1234 곱하기 5678은?" -> {"tool":"calculator","expression":"1234*5678"}',
+  '"크리스마스까지 며칠 남았어?" -> {"tool":"date","op":"diff","date":"","days":0,"target":"<this year>-12-25"}',
+  '"100일 뒤는 언제야" -> {"tool":"date","op":"add","date":"","days":100,"target":""}',
+  '"지금 몇 시야" -> {"tool":"date","op":"now","date":"","days":0,"target":""}',
+  '"30평은 몇 제곱미터?" -> {"tool":"convert","value":30,"from":"평","to":"m2"}',
+  '"화씨 100도는 섭씨로?" -> {"tool":"convert","value":100,"from":"F","to":"C"}',
+  '"내 생일은 5월 3일이야, 기억해 줘" -> {"tool":"remember","text":"사용자 생일: 5월 3일"}',
+  '"내 생일 언제라고 했지?" -> {"tool":"none"}',
+].join('\n');
+
+/**
+ * 메시지에 기기 도구가 필요한지 모델에게 짧게 물어 고른다 (JSON 스키마로 형식 강제).
+ * prev: 바로 앞 대화 (예: "그럼 화씨로는?" 처럼 앞 내용을 가리키는 질문용)
+ */
+export async function pickTool(text: string, prev: ChatMessage[]): Promise<ToolCall | null> {
+  const c = ctx;
+  if (!c) return null;
+  const recent = prev
+    .slice(-2)
+    .map((m) => `${m.role === 'user' ? 'User' : 'Assistant'}: ${m.content.slice(0, 300)}`)
+    .join('\n');
+  const res = await c.completion({
+    messages: [
+      {
+        role: 'user',
+        content: [
+          TOOL_GUIDE,
+          '',
+          todayLine(),
+          ...(recent ? ['Recent conversation:', recent] : []),
+          '',
+          `Message: ${text}`,
+        ].join('\n'),
+      },
+    ],
+    jinja: true,
+    n_predict: 120,
+    temperature: 0,
+    stop: STOP_WORDS,
+    response_format: { type: 'json_schema', json_schema: { strict: true, schema: TOOL_SCHEMA } },
+  });
+  try {
+    const call = JSON.parse(stripStop(res.content || res.text || '').trim()) as ToolCall;
+    return call?.tool && call.tool !== 'none' ? call : null;
+  } catch {
+    return null;
+  }
 }

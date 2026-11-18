@@ -23,6 +23,7 @@ import {
   generateReply,
   loadModel,
   makeImagePrompt,
+  pickTool,
   resetConversationCache,
   stopGeneration,
   unloadModel,
@@ -32,6 +33,7 @@ import {
 } from './llm';
 import type { AreaSize } from '../modules/gemma-fold';
 import { FoldAwareArea } from './FoldAwareArea';
+import { clearMemories, loadMemories, mightNeedTool, removeMemory, runTool } from './tools';
 import { getChatLayout, minInlineComposerWidth, type Division } from './foldLayout';
 import {
   DRAW_STYLES,
@@ -427,6 +429,22 @@ export function ChatScreen({ model, settings, gpuInfo, onChangeSettings, onRemov
     setStats(null);
     await activateKeepAwakeAsync('gen');
     try {
+      // 계산·날짜·단위·기억이 필요해 보이면 기기 도구를 먼저 고르고 실행한 뒤, 그 결과로 답한다
+      if (!userMsg.image && mightNeedTool(userMsg.content)) {
+        setStreaming('🔧 도구 확인 중…');
+        try {
+          const call = await pickTool(userMsg.content, messages);
+          const result = call ? runTool(call) : null;
+          if (result) {
+            userMsg.tool = result;
+            history[history.length - 1] = { ...userMsg };
+            setMessages([...history]);
+          }
+        } catch (e) {
+          console.warn('tool failed', e); // 도구가 실패하면 평소처럼 모델이 답한다
+        }
+        setStreaming('');
+      }
       const { text: reply, stats: st } = await generateReply(history, settings, (t) => setStreaming(t));
       setMessages((prev) => [...prev, { id: uid(), role: 'assistant', content: reply || '(빈 응답)' }]);
       setStats(st);
@@ -669,6 +687,7 @@ export function ChatScreen({ model, settings, gpuInfo, onChangeSettings, onRemov
                         <Image source={{ uri: item.image }} style={[styles.msgImage, { width: mediaSize, height: mediaSize }]} resizeMode="cover" />
                       ) : null}
                       <Text selectable style={[styles.msg, styles.userText]}>{item.content}</Text>
+                      {item.tool ? <Text style={styles.toolChip}>{item.tool.chip}</Text> : null}
                     </>
                   )}
                 </View>
@@ -964,6 +983,8 @@ function SettingsModal({
           </Pressable>
         ) : null}
 
+        <MemorySection visible />
+
         <StorageSection visible busy={upgrading || visionStatus.kind === 'downloading' || imageModelStatus.kind === 'downloading'} />
 
         {imageModelStatus.kind !== 'unsupported' ? (
@@ -1029,6 +1050,59 @@ function SettingsModal({
 }
 
 /** 설정: 앱이 쓰는 저장 공간 내역 */
+/** "기억해 줘" 로 저장한 내용 보기·지우기 */
+function MemorySection({ visible }: { visible: boolean }) {
+  const [list, setList] = useState(() => loadMemories());
+  useEffect(() => {
+    if (visible) setList(loadMemories());
+  }, [visible]);
+  return (
+    <View style={{ marginTop: 24, gap: 6 }}>
+      <Text style={styles.label}>기억 ({list.length})</Text>
+      {list.length === 0 ? (
+        <Text style={styles.hint}>채팅에서 "○○ 기억해 줘" 라고 하면 여기에 저장되고, 이후 대화에서 기억합니다. 이 기기 안에만 저장됩니다.</Text>
+      ) : (
+        <>
+          {list.map((m) => (
+            <View key={m.id} style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+              <Text style={[styles.hint, styles.flex, { color: colors.text }]}>• {m.text}</Text>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel={`${m.text} 지우기`}
+                hitSlop={8}
+                onPress={() => {
+                  removeMemory(m.id);
+                  setList(loadMemories());
+                }}
+              >
+                <Text style={[styles.hint, { color: colors.danger }]}>지우기</Text>
+              </Pressable>
+            </View>
+          ))}
+          <Pressable
+            style={[styles.send, { backgroundColor: colors.border, marginTop: 4 }]}
+            onPress={() =>
+              Alert.alert('기억 모두 지우기', '저장한 기억을 모두 지웁니다.', [
+                { text: '취소', style: 'cancel' },
+                {
+                  text: '모두 지우기',
+                  style: 'destructive',
+                  onPress: () => {
+                    clearMemories();
+                    setList([]);
+                  },
+                },
+              ])
+            }
+          >
+            <Text style={[styles.sendText, { color: colors.text }]}>기억 모두 지우기</Text>
+          </Pressable>
+        </>
+      )}
+    </View>
+  );
+}
+
 function StorageSection({ visible, busy }: { visible: boolean; busy: boolean }) {
   const [info, setInfo] = useState(() => storageBreakdown());
   useEffect(() => {
@@ -1193,6 +1267,7 @@ const styles = StyleSheet.create({
   },
   msg: { fontSize: 15, lineHeight: 22, color: colors.text },
   userText: { color: '#fff' },
+  toolChip: { marginTop: 6, fontSize: 12, lineHeight: 17, color: 'rgba(255,255,255,0.8)' },
   composerPane: { backgroundColor: colors.bg },
   lowerPane: {
     flex: 1,
