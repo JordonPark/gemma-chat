@@ -36,7 +36,10 @@ jobs:
           mkdir -p work && cd work
           curl -sSfL -H "Authorization: Bearer $HF_TOKEN" -o model.zip "https://huggingface.co/$HF_REPO/resolve/main/$HF_FILE"
           unzip -q model.zip -d m && rm model.zip
-          RES=$(dirname "$(find m -type d -name 'Unet.mlmodelc' | head -1)")
+          # macOS 가 zip 에 넣는 __MACOSX(리소스 포크) 폴더는 모델이 아니다. 지우고 시작한다
+          find m -name '__MACOSX' -type d -prune -exec rm -rf {} +
+          find m -name '._*' -type f -delete
+          RES=$(dirname "$(find m -type d -name 'Unet.mlmodelc' -not -path '*/__MACOSX/*' | head -1)")
           [ -n "$RES" ] && [ "$RES" != "." ] || { echo "::error::Unet.mlmodelc 를 찾지 못했습니다"; find m -maxdepth 3 | head -40; exit 1; }
           echo "RES=$PWD/$RES" >> "$GITHUB_ENV"
           echo "::notice title=model contents::$(ls "$RES" | tr '\n' ' ')"
@@ -47,16 +50,19 @@ jobs:
           gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --pattern "$SAFETY_SRC" --pattern sd.json
           # 안전 검사 + SD 1.5 공통 CLIP 토크나이저(vocab.json, merges.txt; 변환본에 빠져 있음)를 Apple 패키지에서 가져온다
           unzip -q "$SAFETY_SRC" '*SafetyChecker.mlmodelc/*' '*vocab.json' '*merges.txt' -d safety && rm "$SAFETY_SRC"
-          SC=$(find safety -type d -name 'SafetyChecker.mlmodelc' | head -1)
+          SC=$(find safety -type d -name 'SafetyChecker.mlmodelc' -not -path '*/__MACOSX/*' | head -1)
           [ -n "$SC" ] || { echo "::error::SafetyChecker 를 찾지 못했습니다"; exit 1; }
           rm -rf "$RES/SafetyChecker.mlmodelc" "$RES/VAEEncoder.mlmodelc"
           cp -R "$SC" "$RES/"
           for t in vocab.json merges.txt; do
-            [ -e "$RES/$t" ] || cp "$(find safety -name "$t" | head -1)" "$RES/"
+            [ -e "$RES/$t" ] || cp "$(find safety -name "$t" -not -path '*/__MACOSX/*' | head -1)" "$RES/"
           done
           for f in TextEncoder.mlmodelc Unet.mlmodelc VAEDecoder.mlmodelc SafetyChecker.mlmodelc vocab.json merges.txt; do
             [ -e "$RES/$f" ] || { echo "::error::$f 가 없습니다"; exit 1; }
           done
+          # 안전장치: Unet 가중치가 너무 작으면(예: 엉뚱한 폴더) 올리지 않는다
+          UNET=$(du -sm "$RES/Unet.mlmodelc" | cut -f1)
+          [ "$UNET" -gt 800 ] || { echo "::error::Unet.mlmodelc 가 ${UNET}MB 로 너무 작습니다 (잘못된 패키지)"; exit 1; }
           echo "::notice title=resources::$(du -sh "$RES"/* | tr '\n' ' ')"
 
       - name: Zip + manifest
