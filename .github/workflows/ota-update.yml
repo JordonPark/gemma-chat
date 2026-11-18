@@ -76,7 +76,7 @@ jobs:
           for P in ios android; do
             OUT=$(curl -sS -m 30 "https://u.expo.dev/${EXPO_PROJECT_ID}" \
               -H "expo-platform: $P" -H "expo-runtime-version: $RV" -H "expo-channel-name: production" \
-              -H "expo-protocol-version: 1" -H "accept: application/expo+json,application/json" -w '\nHTTP %{http_code}')
+              -H "expo-protocol-version: 1" -H "accept: multipart/mixed" -w '\nHTTP %{http_code}')
             ID=$(echo "$OUT" | grep -o '"id":"[^"]*"' | head -1)
             AT=$(echo "$OUT" | grep -o '"createdAt":"[^"]*"' | head -1)
             CODE=$(echo "$OUT" | tail -1)
