@@ -1,0 +1,49 @@
+# 일회성 조사: Core ML 로 변환된 SD 1.5 기반 일러스트·애니 모델 후보 (이름·라이선스·파일·크기)
+name: Explore SD models
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/explore-sd-models.yml'
+
+jobs:
+  list:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      HF_TOKEN: ${{ secrets.HF_TOKEN }}
+    steps:
+      - name: Search candidates
+        run: |
+          cat > s.py <<'PY'
+          import json, os, re, urllib.request
+          H = {"Authorization": "Bearer " + os.environ["HF_TOKEN"]}
+          def get(u):
+              return json.load(urllib.request.urlopen(urllib.request.Request(u, headers=H), timeout=60))
+          KW = re.compile(r"anime|illust|counterfeit|dreamshaper|rev.?anim|meina|anything|toon|cartoon|ghibli|disney|pixar|waifu|cetus|aniverse|niji|kawaii|chibi|storybook|comic|manga|flat|vector|3d", re.I)
+          rows = []
+          for q in ["https://huggingface.co/api/models?author=coreml-community&limit=500&full=true",
+                    "https://huggingface.co/api/models?search=coreml&limit=300&full=true"]:
+              try:
+                  for m in get(q):
+                      mid = m["id"]
+                      if not KW.search(mid): continue
+                      lic = (m.get("cardData") or {}).get("license") or next((t[8:] for t in m.get("tags", []) if t.startswith("license:")), "?")
+                      rows.append((m.get("downloads", 0), mid, lic, m.get("lastModified", "")[:10]))
+              except Exception as e:
+                  print("::warning::search failed", q, e)
+          rows = sorted(set(rows), reverse=True)[:40]
+          print("::notice title=candidates::" + " | ".join(f"{mid} [{lic}] dl={dl} {lm}" for dl, mid, lic, lm in rows))
+          # 상위 후보의 파일 목록 (split_einsum / compiled zip 크기)
+          for dl, mid, lic, lm in rows[:9]:
+              try:
+                  files = get(f"https://huggingface.co/api/models/{mid}/tree/main?recursive=true")
+                  zs = [f"{x['path']}({round(x.get('size',0)/1e6)}MB)" for x in files if x.get("type") == "file" and re.search(r"\.zip$|split|einsum|compiled", x["path"], re.I)][:12]
+                  dirs = sorted({x["path"].split("/")[0] for x in files})[:12]
+                  print(f"::notice title={mid} [{lic}]::dirs={dirs} files={zs}")
+              except Exception as e:
+                  print(f"::warning::{mid} list failed {e}")
+          PY
+          python3 s.py
