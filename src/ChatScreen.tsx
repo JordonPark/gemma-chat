@@ -242,11 +242,11 @@ export function ChatScreen({ model, settings, gpuInfo, initialInput = '', onChan
     await activateKeepAwakeAsync('draw');
     let unloaded = false;
     try {
-      const prompt = await makeImagePrompt(d, referencedPhoto(d, messages));
+      const { prompt, people } = await makeImagePrompt(d, referencedPhoto(d, messages));
       phase('메모리 확보 중…');
       await unloadModel();
       unloaded = true;
-      const uri = await drawPicture(prompt, style, (stage, p) =>
+      const uri = await drawPicture(prompt, style, people, (stage, p) =>
         stage === 'loading'
           ? phase('그림 모델 불러오는 중…')
           : phase(`그리는 중 ${p?.step ?? 0}/${p?.stepCount ?? 25}`, p ? p.step / Math.max(1, p.stepCount) : 0),

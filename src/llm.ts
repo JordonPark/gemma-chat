@@ -311,7 +311,10 @@ export async function generateIllustration(
 /**
  * 한국어 요청을 Stable Diffusion 용 영어 프롬프트(주제·자세·배경)로 바꾼다. 그림체 단어는 앱이 붙인다.
  */
-export async function makeImagePrompt(description: string, photoContext?: string): Promise<string> {
+/** 그림 모델에 넘길 영어 프롬프트. people=false 면 사람을 그리지 않도록 막는다 */
+export type ImagePrompt = { prompt: string; people: boolean };
+
+export async function makeImagePrompt(description: string, photoContext?: string): Promise<ImagePrompt> {
   const c = ctx;
   if (!c) throw new Error('모델이 로드되지 않았습니다.');
   await c.clearCache(false);
@@ -326,32 +329,48 @@ export async function makeImagePrompt(description: string, photoContext?: string
             ? [`The request refers to a photo the user shared earlier. Description of that photo: ${photoContext.trim()}`]
             : []),
           '',
-          'Describe only what to draw: the main subject with 2-4 key visual details (colors, pose, expression, clothing), what it is doing, and the setting/background.',
-          'Comma-separated phrases, 15 to 40 words. Do NOT mention art style, medium, quality or camera words (they are added automatically).',
-          'If the request asks for a person, describe a fictional character. Keep it wholesome.',
+          'subject: the main thing to draw, 1-4 English words, exactly what was asked (e.g. "pepperoni pizza", "orange cat", "lighthouse").',
+          'details: comma-separated phrases (10 to 30 words) describing ONLY that subject and its setting: shape, colors, materials, lighting, background.',
+          'Draw exactly what was requested. Do NOT add people, characters or faces unless the request asks for a person/character; food, objects, animals and places are drawn alone.',
+          'Do NOT mention art style, medium, quality or camera words (they are added automatically).',
+          'people: true only if the request asks for a person or human-like character. If so describe a fictional character and keep it wholesome.',
         ].join('\n'),
       },
     ],
     jinja: true,
-    n_predict: 160,
-    temperature: 0.4,
+    n_predict: 200,
+    temperature: 0.3,
     top_k: 40,
     top_p: 0.9,
     stop: STOP_WORDS,
     response_format: {
       type: 'json_schema',
-      json_schema: { strict: true, schema: { type: 'object', properties: { prompt: { type: 'string' } }, required: ['prompt'] } },
+      json_schema: {
+        strict: true,
+        schema: {
+          type: 'object',
+          properties: { subject: { type: 'string' }, details: { type: 'string' }, people: { type: 'boolean' } },
+          required: ['subject', 'details', 'people'],
+          additionalProperties: false,
+        },
+      },
     },
   });
   await c.clearCache(false);
   const raw = stripStop(res.content || res.text || '');
   try {
-    const p = String(JSON.parse(raw.slice(raw.indexOf('{'), raw.lastIndexOf('}') + 1)).prompt ?? '').trim();
-    if (p) return p.replace(/\s+/g, ' ').slice(0, 400);
+    const j = JSON.parse(raw.slice(raw.indexOf('{'), raw.lastIndexOf('}') + 1));
+    const subject = String(j.subject ?? '').trim();
+    const details = String(j.details ?? '').trim();
+    if (subject || details) {
+      // 주제를 맨 앞에 한 번 더 둔다 (CLIP 은 앞쪽 낱말을 더 강하게 반영한다)
+      const prompt = [subject && `a ${subject}`, details].filter(Boolean).join(', ');
+      return { prompt: prompt.replace(/\s+/g, ' ').slice(0, 400), people: j.people === true };
+    }
   } catch {
     // 아래 기본값
   }
-  return description.trim();
+  return { prompt: description.trim(), people: /사람|인물|소녀|소년|여자|남자|아이|캐릭터|girl|boy|person|character/i.test(description) };
 }
 
 // ───────────────────────── 기기 도구 고르기 (계산기·날짜·단위 변환·기억)

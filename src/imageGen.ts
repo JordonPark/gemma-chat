@@ -216,15 +216,15 @@ export const DRAW_STYLES: DrawStyle[] = [
     id: 'anime',
     label: '애니·웹툰',
     keywords: /애니|웹툰|만화|아니메/,
-    suffix: 'anime style illustration, webtoon, clean line art, cel shading, vibrant colors, expressive eyes, detailed background, high quality',
+    suffix: 'anime style illustration, webtoon, clean line art, cel shading, vibrant colors, detailed background, high quality',
     negative: 'photo, photorealistic, realistic, 3d render, cgi',
     guidance: 7.5,
   },
   {
     id: '3d',
-    label: '3D 캐릭터',
+    label: '3D 애니메이션',
     keywords: /3d|3D|입체|피규어/,
-    suffix: '3d animated movie style, stylized cute cartoon character, soft studio lighting, smooth shading, subsurface scattering, vibrant colors, high quality render',
+    suffix: '3d animated movie style render, stylized cute cartoon look, soft studio lighting, smooth shading, subsurface scattering, vibrant colors, high quality render',
     negative: 'photo, photorealistic, 2d, flat, sketch, anime',
     guidance: 7.0,
   },
@@ -285,9 +285,13 @@ export type DrawStage = 'loading' | 'generating';
  * 영어 프롬프트로 그림을 만든다. 첫 실행은 Neural Engine 준비로 1~3분 더 걸린다.
  * 결과는 Documents/pictures/*.png 에 저장된다.
  */
+/** 사람을 그리지 말아야 할 때 (음식·물건·동물·풍경) 더하는 negative */
+const NO_PEOPLE_NEGATIVE = '1girl, 1boy, girl, boy, woman, man, person, people, human, character, face, portrait, hands';
+
 export async function drawPicture(
   englishPrompt: string,
   style: DrawStyle,
+  people: boolean,
   onStage: (stage: DrawStage, p?: SdProgress) => void,
 ): Promise<string> {
   const res = findInstalledImageModel();
@@ -302,7 +306,7 @@ export async function drawPicture(
     const r = await generateImage(
       {
         prompt: `${englishPrompt}, ${style.suffix}`,
-        negativePrompt: `${style.negative}, ${BASE_NEGATIVE}`,
+        negativePrompt: [people ? '' : NO_PEOPLE_NEGATIVE, style.negative, BASE_NEGATIVE].filter(Boolean).join(', '),
         steps: 25,
         guidance: style.guidance,
         outputPath: out.uri,
