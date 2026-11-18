@@ -58,8 +58,7 @@ import { loadChatLibrary, saveChatLibrary } from './storage';
 import { colors } from './theme';
 import { describeVision, useVision, type VisionStatus } from './useVision';
 import { deleteImages, pickImage, type ImageSource } from './vision';
-import { isOcrAvailable, isScanAvailable, recognizeText, scanText } from '../modules/expo-ocr';
-import * as ImagePicker from 'expo-image-picker';
+import { isOcrAvailable, recognizeText } from '../modules/expo-ocr';
 
 const uid = () => `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
 // SwiftUI's navigation stack already lays out the hosted content inside its safe area.
@@ -264,51 +263,13 @@ export function ChatScreen({ settings, gpuInfo, initialInput = '', onChangeSetti
         setWorkingWithPhoto(false);
       }
     };
-    const canScan = await isScanAvailable();
     if (workPending.current || libraryRef.current.activeId !== activeChat.id) return;
     const buttons: AlertButton[] = [
-      // 글자만 필요하면: 사진을 찍지 않고 카메라 화면에서 바로 읽는다 (셔터 소리 없음, 사진도 남지 않음)
-      ...(canScan ? [{ text: '글자 스캔 (사진 안 찍음)', onPress: () => scanLive() }] : []),
       { text: '카메라로 찍기', onPress: () => go('camera') },
       { text: '앨범에서 고르기', onPress: () => go('library') },
+      { text: '취소', style: 'cancel' },
     ];
-    // Android 알림창은 버튼이 3개까지라, 4개가 되면 '취소' 대신 바깥을 눌러 닫게 한다
-    if (Platform.OS !== 'android' || buttons.length < 3) buttons.push({ text: '취소', style: 'cancel' });
     Alert.alert('사진 첨부', '사진은 이 기기 안에서만 처리됩니다.', buttons, { cancelable: true });
-  };
-
-  /** 실시간 글자 스캔: 카메라 화면에서 바로 글자를 읽어 대화에 넣는다 (사진을 찍지 않으므로 셔터 소리 없음) */
-  const scanLive = async () => {
-    if (workPending.current || libraryRef.current.activeId !== activeChat.id) return;
-    workPending.current = true;
-    setWorkingWithPhoto(true);
-    try {
-      const perm = await ImagePicker.requestCameraPermissionsAsync();
-      if (!perm.granted) {
-        Alert.alert('카메라 권한 필요', '설정에서 이 앱의 카메라 접근을 허용해 주세요.');
-        return;
-      }
-      const text = await scanText();
-      if (!text) return; // 취소
-      followLatest.current = true;
-      setMessages((prev) => [
-        ...prev,
-        { id: uid(), role: 'user', content: '📝 글자 스캔' },
-        {
-          id: uid(),
-          role: 'assistant',
-          localOcr: true,
-          content:
-            `**스캔한 글자** (기기 OCR, 길게 눌러 복사)\n\n\`\`\`\n${text.replace(/```/g, "'''")}\n\`\`\`\n\n` +
-            '번역·요약·설명이 필요하면 이어서 말씀해 주세요.',
-        },
-      ]);
-    } catch (e: any) {
-      Alert.alert('글자 스캔', String(e?.message ?? e));
-    } finally {
-      workPending.current = false;
-      setWorkingWithPhoto(false);
-    }
   };
 
   /** 첨부 사진의 글자만 바로 보여 준다 (Gemma 를 거치지 않음) */
