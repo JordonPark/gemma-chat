@@ -33,7 +33,15 @@ import {
 import type { AreaSize } from '../modules/gemma-fold';
 import { FoldAwareArea } from './FoldAwareArea';
 import { getChatLayout, minInlineComposerWidth, type Division } from './foldLayout';
-import { cancelImageGen, deletePictures, drawPicture } from './imageGen';
+import {
+  DRAW_STYLES,
+  cancelImageGen,
+  deletePictures,
+  drawPicture,
+  getDrawStyle,
+  prepareImageModel,
+  type DrawStyle,
+} from './imageGen';
 import { describeImageModel, useImageModel, type ImageModelStatus } from './useImageModel';
 import { formatBytes, type InstalledModel } from './modelStore';
 import { Markdown } from './Markdown';
@@ -84,7 +92,11 @@ export function ChatScreen({ model, settings, gpuInfo, onChangeSettings, onRemov
   const listRef = useRef<FlatList<ChatMessage>>(null);
   const followLatest = useRef(true);
   const vision = useVision(settings);
-  const imageModel = useImageModel();
+  // 그림 모델을 다 받으면 바로 준비(Neural Engine 컴파일)까지 해 둔다 → 첫 그림부터 기다림 없이 그린다
+  const pendingDrawRef = useRef<string | null>(null);
+  const drawRef = useRef<(d: string) => void>(() => {});
+  const prepareRef = useRef<() => void>(() => {});
+  const imageModel = useImageModel(() => prepareRef.current());
 
   // ── 더 작은 채팅 모델로 교체 (설정을 열 때 한 번 확인) ──
   const [upgrade, setUpgrade] = useState<ModelUpgrade | null>(null);
@@ -181,12 +193,12 @@ export function ChatScreen({ model, settings, gpuInfo, onChangeSettings, onRemov
   };
 
   /**
-   * iPhone: 그림 모델(Stable Diffusion)로 수채화 동화풍 그림을 그린다.
+   * iPhone: 그림 모델(Stable Diffusion)로 고른 그림체로 그린다.
    * 메모리를 위해 채팅 모델을 잠시 내렸다가, 다 그리면 다시 올린다.
    */
-  const drawWithModel = async (d: string) => {
+  const drawWithModel = async (d: string, style: DrawStyle, addRequest = true) => {
     followLatest.current = true;
-    setMessages((prev) => [...prev, { id: uid(), role: 'user', content: `🎨 ${d}` }]);
+    if (addRequest) setMessages((prev) => [...prev, { id: uid(), role: 'user', content: `🎨 ${d}` }]);
     setInput('');
     setStats(null);
     const phase = (p: string, progress?: number) =>
@@ -199,12 +211,15 @@ export function ChatScreen({ model, settings, gpuInfo, onChangeSettings, onRemov
       phase('메모리 확보 중…');
       await unloadModel();
       unloaded = true;
-      const uri = await drawPicture(prompt, (stage, p) =>
+      const uri = await drawPicture(prompt, style, (stage, p) =>
         stage === 'loading'
-          ? phase('그림 모델 준비 중… (처음 한 번은 1~3분)')
+          ? phase('그림 모델 불러오는 중…')
           : phase(`그리는 중 ${p?.step ?? 0}/${p?.stepCount ?? 25}`, p ? p.step / Math.max(1, p.stepCount) : 0),
       );
-      setMessages((prev) => [...prev, { id: uid(), role: 'assistant', content: `[그림: ${d}]`, picture: uri }]);
+      setMessages((prev) => [
+        ...prev,
+        { id: uid(), role: 'assistant', content: `[그림: ${d} · ${style.label}]`, picture: uri },
+      ]);
     } catch (e: any) {
       const msg = String(e?.message ?? e);
       if (!/취소/.test(msg)) Alert.alert('그리기 오류', msg);
@@ -223,6 +238,40 @@ export function ChatScreen({ model, settings, gpuInfo, onChangeSettings, onRemov
     }
   };
 
+  /** 그림 모델 첫 준비: 채팅 모델을 잠시 내리고 컴파일한 뒤 다시 올린다. 기다리던 그림 요청이 있으면 이어서 진행 */
+  prepareRef.current = async () => {
+    followLatest.current = true;
+    setDrawing({ desc: '', svg: null, chars: 0, phase: '그림 모델을 처음 준비하는 중… (이 기기에서 한 번만, 1~3분)' });
+    await activateKeepAwakeAsync('sd-prepare');
+    let unloaded = false;
+    try {
+      await unloadModel();
+      unloaded = true;
+      await prepareImageModel();
+      setMessages((prev) => [
+        ...prev,
+        { id: uid(), role: 'assistant', content: '그림 준비가 끝났어요. 이제 그림을 바로 그릴 수 있습니다. 🎨' },
+      ]);
+    } catch (e: any) {
+      Alert.alert('그림 모델 준비 실패', `처음 그릴 때 다시 준비합니다.\n(${e?.message ?? e})`);
+    } finally {
+      if (unloaded) {
+        setDrawing({ desc: '', svg: null, chars: 0, phase: '채팅 모델 다시 불러오는 중…' });
+        try {
+          await loadModel(model.path, settings);
+          vision.retry();
+        } catch (e: any) {
+          Alert.alert('채팅 모델을 다시 불러오지 못했습니다', `앱을 껐다 켜 주세요.\n(${e?.message ?? e})`);
+        }
+      }
+      deactivateKeepAwake('sd-prepare');
+      setDrawing(null);
+      const pending = pendingDrawRef.current;
+      pendingDrawRef.current = null;
+      if (pending) setTimeout(() => drawRef.current(pending), 0);
+    }
+  };
+
   /** 설명을 받아 그림을 그린다 (iPhone: 그림 모델, 그 외: 도형 일러스트) */
   const draw = async (desc: string) => {
     if (busy) return;
@@ -232,8 +281,27 @@ export function ChatScreen({ model, settings, gpuInfo, onChangeSettings, onRemov
       return;
     }
     if (usePictureModel) {
-      if (!imageModel.ensureReady()) return;
-      return drawWithModel(d);
+      if (!imageModel.ensureReady()) {
+        if (imageModel.status.kind === 'missing') pendingDrawRef.current = d; // 다 받고 준비되면 이어서 그린다
+        return;
+      }
+      // 요청에 그림체를 말했으면 바로 그리고, 아니면 채팅으로 물어본다
+      const named = DRAW_STYLES.find((st) => st.keywords.test(d));
+      if (named) return drawWithModel(d, named);
+      followLatest.current = true;
+      setMessages((prev) => [
+        ...prev,
+        { id: uid(), role: 'user', content: `🎨 ${d}` },
+        {
+          id: uid(),
+          role: 'assistant',
+          content: '어떤 그림체로 그릴까요? 아래에서 고르거나 채팅으로 답해 주세요. (예: "애니로", "사진처럼")',
+          choices: DRAW_STYLES.map((st) => ({ id: st.id, label: st.label })),
+          choiceFor: d,
+        },
+      ]);
+      setInput('');
+      return;
     }
     followLatest.current = true;
     setMessages((prev) => [...prev, { id: uid(), role: 'user', content: `🎨 ${d}` }]);
@@ -278,9 +346,33 @@ export function ChatScreen({ model, settings, gpuInfo, onChangeSettings, onRemov
     ]);
   };
 
+  drawRef.current = draw;
+
+  /** 채팅으로 물어본 그림체에 답했을 때 (버튼 또는 입력) */
+  const chooseStyle = (msgId: string, styleId: string, typed?: string) => {
+    const ask = messages.find((m) => m.id === msgId);
+    if (!ask?.choiceFor || busy) return;
+    const style = getDrawStyle(styleId);
+    setMessages((prev) => [
+      ...prev.map((m) => (m.id === msgId ? { ...m, choices: undefined } : m)),
+      { id: uid(), role: 'user', content: typed ?? style.label },
+    ]);
+    drawWithModel(ask.choiceFor, style, false);
+  };
+
   const send = async () => {
     const text = input.trim();
     if (!canSend || busy) return;
+    // 그림체를 물어본 직후의 답이면 그 그림체로 그린다. 상관없는 말이면 질문을 접고 평소처럼 대화한다
+    const last = messages[messages.length - 1];
+    if (last?.choices && last.choiceFor && !pendingImage) {
+      const st = DRAW_STYLES.find((x) => x.keywords.test(text) || text.includes(x.label));
+      if (st) {
+        setInput('');
+        return chooseStyle(last.id, st.id, text);
+      }
+      setMessages((prev) => prev.map((m) => (m.id === last.id ? { ...m, choices: undefined } : m)));
+    }
     // "…그려줘", "…그림 그려 주세요", "…일러스트 만들어줘" 는 그림 그리기로 보낸다 (사진 첨부가 없을 때)
     if (!pendingImage && /(그려\s*(줘|주세요|줄래|봐)|그림\s*(을\s*)?(그려|만들어)|일러스트\s*(를\s*)?(그려|만들어))/.test(text)) {
       return draw(text);
@@ -520,6 +612,24 @@ export function ChatScreen({ model, settings, gpuInfo, onChangeSettings, onRemov
                     )
                   ) : item.role === 'assistant' && item.picture ? (
                     <PictureCard uri={item.picture} size={mediaSize} caption={item.content.replace(/^\[그림: (.*)\]$/, '$1')} />
+                  ) : item.role === 'assistant' && item.choices?.length ? (
+                    <View style={{ gap: 10 }}>
+                      <Markdown text={item.content} />
+                      {item.id === messages[messages.length - 1]?.id && !busy ? (
+                        <View style={styles.choiceRow}>
+                          {item.choices.map((c) => (
+                            <Pressable
+                              key={c.id}
+                              accessibilityRole="button"
+                              style={styles.choiceChip}
+                              onPress={() => chooseStyle(item.id, c.id)}
+                            >
+                              <Text style={styles.choiceText}>{c.label}</Text>
+                            </Pressable>
+                          ))}
+                        </View>
+                      ) : null}
+                    </View>
                   ) : item.role === 'assistant' && item.svg ? (
                     <SvgCard svg={item.svg} size={mediaSize} caption={item.content.replace(/^\[일러스트: (.*)\]$/, '$1')} />
                   ) : item.role === 'assistant' ? (
@@ -820,7 +930,7 @@ function SettingsModal({
 
         {imageModelStatus.kind !== 'unsupported' ? (
           <>
-            <Text style={[styles.label, { marginTop: 24 }]}>그림 모델 (수채화 동화풍)</Text>
+            <Text style={[styles.label, { marginTop: 24 }]}>그림 모델</Text>
             <Text style={styles.hint}>{describeImageModel(imageModelStatus)}</Text>
             {imageModelStatus.kind === 'missing' ? (
               <Pressable style={[styles.send, { marginTop: 8 }]} onPress={onDownloadImageModel}>
@@ -1115,6 +1225,15 @@ const styles = StyleSheet.create({
   pendingBtn: { minHeight: 44, justifyContent: 'center', paddingHorizontal: 8, borderRadius: 8, backgroundColor: colors.accentSoft },
   pendingBtnText: { color: colors.accentText, fontSize: 13, fontWeight: '600' },
   pendingXText: { fontSize: 16, color: colors.muted },
+  choiceRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
+  choiceChip: {
+    minHeight: 36,
+    justifyContent: 'center',
+    paddingHorizontal: 12,
+    borderRadius: 18,
+    backgroundColor: colors.accentSoft,
+  },
+  choiceText: { color: colors.accentText, fontSize: 14, fontWeight: '600' },
   picture: { borderRadius: 14 },
   drawProgress: { gap: 8 },
   dlBar: {

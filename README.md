@@ -128,14 +128,15 @@ Gemma 3 4B는 이미지를 이해하는 모델입니다. 비전 프로젝터(`mm
 
 입력창에 그릴 내용을 적고 **🎨**를 누르거나, "…그려줘", "…일러스트 만들어줘"라고 보냅니다.
 
-### iPhone: 수채화 동화풍 그림 (Stable Diffusion, 기기 안에서 생성)
+### iPhone: 그림 모델 (Stable Diffusion, 기기 안에서 생성)
 - **모델:** Apple이 iPhone 신경망 칩용으로 변환한 **Stable Diffusion 1.5**(Core ML, 6-bit palettized, `split_einsum_v2`)를 씁니다. 처음 그릴 때 약 1.6GB를 한 번 받고, 압축을 풀 때 약 3.3GB의 여유 공간이 필요합니다. Release에는 *Actions › Publish image model*이 올립니다.
+- **그림체:** 요청에 그림체를 말하면("픽셀아트로 …") 바로 그리고, 말하지 않으면 채팅으로 **"어떤 그림체로 그릴까요?"**라고 묻습니다. 버튼으로 고르거나 "애니로"처럼 답하면 됩니다. 그림체는 애니·웹툰, 3D 캐릭터, 플랫 일러스트, 색연필, 픽셀아트, 사진처럼, 수채화 동화 중에서 고릅니다(`src/imageGen.ts`의 `DRAW_STYLES`).
 - **흐름:**
   1. Gemma가 한국어 요청을 영어 장면 묘사로 바꿉니다.
-  2. 앱이 수채화 동화책 스타일 문구와 제외 문구를 붙입니다.
+  2. 앱이 고른 그림체 문구와 제외 문구를 붙입니다.
   3. 채팅 모델을 잠시 내리고 25단계로 그립니다(512×512).
   4. 그림이 끝나면 채팅 모델을 다시 불러옵니다.
-- **시간:** 처음 한 번은 Neural Engine 준비에 1~3분이 걸립니다. 그 뒤로는 한 장에 수십 초 정도 걸릴 것으로 예상합니다.
+- **시간:** Neural Engine용 준비(컴파일)는 기기마다 한 번만 하고 iOS가 캐시합니다. 모델을 다 받으면 바로 이 준비(1~3분)까지 끝내 두기 때문에, 첫 그림부터 기다림 없이 그립니다. 한 장에 수십 초 정도 걸릴 것으로 예상합니다.
 - **안전 검사:** Apple 파이프라인의 안전 검사(Safety Checker)를 켜 두었습니다.
 - **소스:** `modules/expo-sd`에 Apple [ml-stable-diffusion](https://github.com/apple/ml-stable-diffusion)(MIT)의 Swift 소스를 포함했습니다. SD3·T5 파일은 뺐습니다(`ios/StableDiffusion/VENDORED.md`).
 - **모델 라이선스:** CreativeML OpenRAIL-M. 사용 제한 조항을 따라야 합니다.

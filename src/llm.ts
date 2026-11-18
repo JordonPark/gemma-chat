@@ -20,6 +20,10 @@ export type ChatMessage = {
   ocr?: string;
   /** 기기에서 생성한 그림(PNG) file:// URI (어시스턴트 메시지에만) */
   picture?: string;
+  /** 채팅에서 고르게 하는 선택지 (예: 그림체). 마지막 메시지일 때만 버튼으로 보인다 */
+  choices?: { id: string; label: string }[];
+  /** 선택지가 무엇을 위한 것인지 (그림체 질문이면 그릴 내용) */
+  choiceFor?: string;
 };
 
 const OCR_MAX_CHARS = 2000;

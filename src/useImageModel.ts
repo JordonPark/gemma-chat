@@ -12,13 +12,16 @@ export type ImageModelStatus =
   | { kind: 'ready'; path: string }
   | { kind: 'downloading'; progress: ImportProgress | null };
 
-export function useImageModel() {
+/** onDownloaded: 다 받은 직후 호출 (그림 모델 미리 준비 등) */
+export function useImageModel(onDownloaded?: (path: string) => void) {
   const [status, setStatus] = useState<ImageModelStatus>(() => {
     if (!isImageGenAvailable()) return { kind: 'unsupported' };
     const p = findInstalledImageModel();
     return p ? { kind: 'ready', path: p } : { kind: 'missing' };
   });
   const abortRef = useRef<AbortController | null>(null);
+  const onDownloadedRef = useRef(onDownloaded);
+  onDownloadedRef.current = onDownloaded;
 
   const refresh = useCallback(() => {
     if (!isImageGenAvailable()) return setStatus({ kind: 'unsupported' });
@@ -38,6 +41,7 @@ export function useImageModel() {
     try {
       const path = await downloadImageModel((p) => setStatus({ kind: 'downloading', progress: p }), ac.signal);
       setStatus({ kind: 'ready', path });
+      onDownloadedRef.current?.(path);
     } catch (e: any) {
       setStatus({ kind: 'missing' });
       if (!(e instanceof DownloadCancelled)) Alert.alert('그림 모델 받기 실패', String(e?.message ?? e));
@@ -63,7 +67,7 @@ export function useImageModel() {
     }
     Alert.alert(
       '그림 모델 필요',
-      '수채화 동화풍 그림을 그리려면 그림 모델(약 1.6GB)을 한 번 받아야 합니다. 압축을 풀 때 약 3.3GB 의 여유 공간이 필요합니다. Wi-Fi 에서 받는 것을 권장합니다. 받을까요?',
+      '그림을 그리려면 그림 모델(약 1.6GB)을 한 번 받아야 합니다. 압축을 풀 때 약 3.3GB 의 여유 공간이 필요합니다. Wi-Fi 에서 받는 것을 권장합니다. 받을까요?',
       [
         { text: '취소', style: 'cancel' },
         { text: '받기', onPress: () => download() },
@@ -82,7 +86,7 @@ export function describeImageModel(s: ImageModelStatus): string {
     case 'missing':
       return '그림 모델 없음 (약 1.6GB)';
     case 'ready':
-      return '사용 가능 (수채화 동화풍)';
+      return '사용 가능';
     case 'downloading':
       return `받는 중 ${Math.round((s.progress?.ratio ?? 0) * 100)}%${s.progress?.detail ? ` · ${s.progress.detail}` : ''}`;
   }

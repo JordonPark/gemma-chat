@@ -1,5 +1,5 @@
 /**
- * iPhone 기기 안 그림 생성 (Stable Diffusion 1.5, Apple Core ML, Neural Engine).
+ * iPhone 기기 안 그림 생성 (Stable Diffusion 1.5, Apple Core ML, Neural Engine). 그림체는 DRAW_STYLES 에서 고른다.
  *
  * - 모델(약 1.6GB zip)은 처음 그릴 때 GitHub Release(model-v1/sd.json)에서 한 번 받아 기기에서 압축을 푼다.
  * - 그리는 동안 메모리를 확보하려고 채팅 모델(Gemma)을 잠시 내렸다가 다 그리면 다시 올린다 (호출하는 쪽에서 처리).
@@ -140,11 +140,90 @@ export async function downloadImageModel(onProgress: OnProgress, signal: AbortSi
   return res;
 }
 
-/** 수채화 동화책 그림체 */
-export const STYLE_SUFFIX =
-  "watercolor children's storybook illustration, soft pastel colors, gentle warm light, hand-painted paper texture, whimsical, cute, charming, delicate linework, high quality";
-export const NEGATIVE_PROMPT =
-  'photo, photorealistic, realistic, 3d render, cgi, text, letters, watermark, signature, logo, frame, blurry, lowres, jpeg artifacts, deformed, disfigured, bad anatomy, extra limbs, extra fingers, ugly, dark, gloomy, nsfw';
+// ───────────── 그림체 ─────────────
+
+const BASE_NEGATIVE =
+  'text, letters, watermark, signature, logo, frame, border, blurry, lowres, jpeg artifacts, deformed, disfigured, bad anatomy, extra limbs, extra fingers, mutated hands, ugly, nsfw';
+
+export type DrawStyleId = 'anime' | '3d' | 'flat' | 'pencil' | 'pixel' | 'photo' | 'watercolor';
+
+export type DrawStyle = {
+  id: DrawStyleId;
+  label: string;
+  /** 요청 문장에 이 말이 있으면 이 그림체로 그린다 (예: "픽셀아트로 고양이 그려줘") */
+  keywords: RegExp;
+  suffix: string;
+  negative: string;
+  guidance: number;
+};
+
+export const DRAW_STYLES: DrawStyle[] = [
+  {
+    id: 'anime',
+    label: '애니·웹툰',
+    keywords: /애니|웹툰|만화|아니메/,
+    suffix: 'anime style illustration, webtoon, clean line art, cel shading, vibrant colors, expressive eyes, detailed background, high quality',
+    negative: 'photo, photorealistic, realistic, 3d render, cgi',
+    guidance: 7.5,
+  },
+  {
+    id: '3d',
+    label: '3D 캐릭터',
+    keywords: /3d|3D|입체|피규어/,
+    suffix: '3d animated movie style, stylized cute cartoon character, soft studio lighting, smooth shading, subsurface scattering, vibrant colors, high quality render',
+    negative: 'photo, photorealistic, 2d, flat, sketch, anime',
+    guidance: 7.0,
+  },
+  {
+    id: 'flat',
+    label: '플랫 일러스트',
+    keywords: /플랫|벡터|아이콘|미니멀/,
+    suffix: 'flat vector illustration, clean simple shapes, bold flat colors, minimal, graphic design, centered composition, high quality',
+    negative: 'photo, photorealistic, realistic, 3d render, gradient noise, texture, sketch',
+    guidance: 7.5,
+  },
+  {
+    id: 'pencil',
+    label: '색연필',
+    keywords: /색연필|연필|스케치|크레파스/,
+    suffix: 'colored pencil drawing, hand-drawn illustration, soft shading, visible pencil strokes, paper texture, cute, warm colors',
+    negative: 'photo, photorealistic, 3d render, digital painting, vector',
+    guidance: 7.0,
+  },
+  {
+    id: 'pixel',
+    label: '픽셀아트',
+    keywords: /픽셀|도트|레트로 게임/,
+    suffix: 'pixel art, 16-bit retro video game style, crisp pixels, limited color palette, clean sprite, game scene',
+    negative: 'photo, photorealistic, 3d render, smooth gradient, blurry, painting',
+    guidance: 8.0,
+  },
+  {
+    id: 'photo',
+    label: '사진처럼',
+    keywords: /사진|실사|리얼|진짜처럼/,
+    suffix: 'photograph, realistic, natural lighting, 50mm lens, shallow depth of field, highly detailed, sharp focus',
+    negative: 'cartoon, anime, drawing, painting, illustration, 3d render, cgi',
+    guidance: 7.0,
+  },
+  {
+    id: 'watercolor',
+    label: '수채화 동화',
+    keywords: /수채화|동화/,
+    suffix: "watercolor children's storybook illustration, soft pastel colors, gentle warm light, hand-painted paper texture, whimsical, cute",
+    negative: 'photo, photorealistic, realistic, 3d render, cgi, dark, gloomy',
+    guidance: 7.5,
+  },
+];
+
+export const DEFAULT_DRAW_STYLE: DrawStyleId = 'anime';
+
+export const getDrawStyle = (id?: string) => DRAW_STYLES.find((s) => s.id === id) ?? DRAW_STYLES[0];
+
+/** 요청 문장에 그림체를 말했으면 그걸, 아니면 설정의 기본 그림체 */
+export function pickDrawStyle(request: string, fallback?: string): DrawStyle {
+  return DRAW_STYLES.find((s) => s.keywords.test(request)) ?? getDrawStyle(fallback);
+}
 
 export type DrawStage = 'loading' | 'generating';
 
@@ -154,6 +233,7 @@ export type DrawStage = 'loading' | 'generating';
  */
 export async function drawPicture(
   englishPrompt: string,
+  style: DrawStyle,
   onStage: (stage: DrawStage, p?: SdProgress) => void,
 ): Promise<string> {
   const res = findInstalledImageModel();
@@ -167,15 +247,29 @@ export async function drawPicture(
   try {
     const r = await generateImage(
       {
-        prompt: `${englishPrompt}, ${STYLE_SUFFIX}`,
-        negativePrompt: NEGATIVE_PROMPT,
+        prompt: `${englishPrompt}, ${style.suffix}`,
+        negativePrompt: `${style.negative}, ${BASE_NEGATIVE}`,
         steps: 25,
-        guidance: 7.5,
+        guidance: style.guidance,
         outputPath: out.uri,
       },
       (p) => onStage('generating', p),
     );
     return r.uri;
+  } finally {
+    await unloadImageModel().catch(() => {});
+  }
+}
+
+/**
+ * 그림 모델을 미리 준비한다 (Neural Engine 용 컴파일). 기기마다 처음 한 번 1~3분 걸리고, 결과는 iOS 가 캐시한다.
+ * 다 받은 직후에 불러 두면 첫 그림부터 바로 그릴 수 있다. 메모리를 위해 채팅 모델은 호출하는 쪽에서 내려 둔다.
+ */
+export async function prepareImageModel(): Promise<void> {
+  const res = findInstalledImageModel();
+  if (!res) throw new Error('그림 모델이 설치되어 있지 않습니다.');
+  try {
+    await loadImageModel(res);
   } finally {
     await unloadImageModel().catch(() => {});
   }
