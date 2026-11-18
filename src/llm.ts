@@ -15,7 +15,7 @@ import {
   safetySegments,
 } from './contentSafety';
 import { UNIT_IDS, contextForPrompt, todayLine, type ToolCall } from './tools';
-import { LANGUAGE_GUIDE, LANGUAGE_REMINDER, needsKoreanRetry } from './languagePolicy';
+import { LANGUAGE_GUIDE, LANGUAGE_REMINDER, needsKoreanRetry, removeEchoes } from './languagePolicy';
 import type { PhotoAnnotations } from './photoAnnotate';
 import { SOLVE_GUIDE, isSolveRequest } from './problemSolve';
 
@@ -280,6 +280,7 @@ export async function generateReply(
     if (!again.res.interrupted && again.text) ({ res, text } = again);
   }
   if (res.interrupted) text = '답변 생성을 중단했습니다.';
+  else text = removeEchoes(text); // "문장 (문장)" 처럼 같은 말을 괄호로 되풀이한 부분 정리
   if (!res.interrupted) await checkGeneratedContent(text, 'assistant reply');
   return {
     text,
