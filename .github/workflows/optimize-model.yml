@@ -1,0 +1,68 @@
+# 실험: 채팅 모델 용량 줄이기.
+# Google QAT Q4_0 GGUF 는 본문은 4bit 지만 토큰 임베딩(262k x 2560)이 16bit 라 1GB 이상을 차지한다.
+#   A) 임베딩만 Q8_0 로 바꾸고 나머지 텐서는 바이트 그대로 복사 (gguf-py)
+#   B) llama-quantize --token-embedding-type q6_K (다른 텐서가 바뀌는지 함께 확인)
+# 크기·텐서 형식·바뀐 텐서 수·같은 질문에 대한 답을 Actions 주석으로 남긴다.
+name: Optimize model (experiment)
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/optimize-model.yml'
+      - 'tools/shrink_embeddings.py'
+
+jobs:
+  optimize:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      LLAMA_REF: b12292 # llama.rn 이 쓰는 llama.cpp 와 같은 버전
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Download current model from Release
+        run: |
+          mkdir -p work && cd work
+          gh release download model-v1 --repo "$GITHUB_REPOSITORY" --pattern 'gemma-3-4b-it-q4_0.gguf.part*' --pattern manifest.json
+          cat gemma-3-4b-it-q4_0.gguf.part* > orig.gguf && rm gemma-3-4b-it-q4_0.gguf.part*
+          python3 -c "import json,hashlib;m=json.load(open('manifest.json'));h=hashlib.sha256();f=open('orig.gguf','rb')
+          while (b:=f.read(1<<24)): h.update(b)
+          assert h.hexdigest()==m['sha256'], 'sha mismatch'; print('sha ok')"
+          ls -l
+
+      - name: Build llama.cpp tools
+        run: |
+          git clone --depth 1 --branch "$LLAMA_REF" https://github.com/ggml-org/llama.cpp llama.cpp
+          cmake -S llama.cpp -B llama.cpp/build -DCMAKE_BUILD_TYPE=Release -DGGML_NATIVE=OFF -DLLAMA_CURL=OFF -DLLAMA_BUILD_TESTS=OFF
+          cmake --build llama.cpp/build -j4 --target llama-quantize llama-simple
+          pip install --quiet numpy ./llama.cpp/gguf-py
+
+      - name: Inspect original
+        run: |
+          python3 tools/shrink_embeddings.py inspect work/orig.gguf | tee work/orig.txt
+          echo "::notice title=original::$(tr '\n' ' ' < work/orig.txt)"
+
+      - name: A) embeddings to Q8_0 (other tensors copied as-is)
+        run: |
+          python3 tools/shrink_embeddings.py shrink work/orig.gguf work/a.gguf
+          python3 tools/shrink_embeddings.py inspect work/a.gguf | tee work/a.txt
+          python3 tools/shrink_embeddings.py diff work/orig.gguf work/a.gguf | tee work/a.diff
+          echo "::notice title=A q8_0 embed::$(tr '\n' ' ' < work/a.txt) || $(tr '\n' ' ' < work/a.diff)"
+
+      - name: B) llama-quantize token embedding q6_K
+        run: |
+          ./llama.cpp/build/bin/llama-quantize --allow-requantize --token-embedding-type q6_K work/orig.gguf work/b.gguf Q4_0 > work/b.log 2>&1 || (tail -30 work/b.log; exit 1)
+          python3 tools/shrink_embeddings.py inspect work/b.gguf | tee work/b.txt
+          python3 tools/shrink_embeddings.py diff work/orig.gguf work/b.gguf | tee work/b.diff
+          echo "::notice title=B q6_K embed::$(tr '\n' ' ' < work/b.txt) || $(tr '\n' ' ' < work/b.diff)"
+
+      - name: Same question to each model
+        run: |
+          P=$'<start_of_turn>user\n고양이에 대해 세 문장으로 설명해 주세요.<end_of_turn>\n<start_of_turn>model\n'
+          for M in orig a b; do
+            OUT=$(./llama.cpp/build/bin/llama-simple -m work/$M.gguf -n 90 "$P" 2>/dev/null | tr '\n' ' ' | sed 's/<start_of_turn>user.*<start_of_turn>model//')
+            echo "::notice title=answer $M::$OUT"
+          done
