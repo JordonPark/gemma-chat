@@ -39,6 +39,7 @@ import { conversationName, hasConversationContent, makeConversation, removeTask,
 import { DuoToolbar, hasDuoToolbar } from './DuoToolbar';
 import { FoldAwareArea } from './FoldAwareArea';
 import { FadeIn, PressableScale, Segmented, TypingDots, smoothLayout } from './motion';
+import { TypewriterMarkdown } from './Typewriter';
 import { LeftDrawer } from './LeftDrawer';
 import { AnnotatedPhoto } from './AnnotatedPhoto';
 import { analysisHeader, analyzePhoto, needsTranslation, type PhotoAnalysis, type PhotoAnnotations } from './photoAnnotate';
@@ -52,7 +53,6 @@ import { LegalInfo } from './LegalInfo';
 import { ReportContent } from './ReportContent';
 import { APP_NAME, SUPPORT_BASE_URL } from './storeConfig';
 import type { InstalledModel } from './modelStore';
-import { Markdown } from './Markdown';
 import { UpdateBanner, checkForUpdateInteractive, describeAppVersion } from './UpdateBanner';
 import { loadChatLibrary, saveChatLibrary } from './storage';
 import { colors } from './theme';
@@ -127,11 +127,20 @@ export function ChatScreen({ settings, gpuInfo, initialInput = '', onChangeSetti
   if (shownBubbles.current?.chat !== activeChat.id) {
     shownBubbles.current = { chat: activeChat.id, ids: new Set(messages.map((m) => m.id)) };
   }
+  /** 새로 생긴 답은 타자 치듯 펼친다 (처음 그려질 때 한 번만) */
+  const typeIds = useRef(new Set<string>());
   const isNewBubble = (id: string) => {
     const seen = shownBubbles.current!.ids;
     if (seen.has(id)) return false;
     seen.add(id);
+    typeIds.current.add(id);
     return true;
+  };
+  /** 답을 펼치는 동안에는 스크롤을 애니메이션 없이 따라가게 해 끊김을 없앤다 */
+  const typing = useRef(0);
+  const onTyping = (on: boolean) => {
+    typing.current = Math.max(0, typing.current + (on ? 1 : -1));
+    if (!on && followLatest.current) listRef.current?.scrollToEnd({ animated: true });
   };
   const activeTask = library.tasks.find((task) => task.id === activeChat.taskId);
   const [scope, setScope] = useState<ChatScope>(activeTask?.id);
@@ -552,7 +561,7 @@ export function ChatScreen({ settings, gpuInfo, initialInput = '', onChangeSetti
     if (!followLatest.current || data.length === 0) return;
     // 연 직후(처음 그려지는 동안)에는 애니메이션 없이 바로 맨 아래로
     const opening = Date.now() - (openedChat.current?.at ?? 0) < 800;
-    listRef.current?.scrollToEnd({ animated: animated && !opening });
+    listRef.current?.scrollToEnd({ animated: animated && !opening && typing.current === 0 });
   };
   // 위로 올려 읽는 중이면 "맨 아래로" 버튼을 보여 준다
   const [showJump, setShowJump] = useState(false);
@@ -705,7 +714,7 @@ export function ChatScreen({ settings, gpuInfo, initialInput = '', onChangeSetti
                       <TypingDots />
                     </View>
                   ) : item.role === 'assistant' ? (
-                    <Markdown text={item.content} />
+                    <TypewriterMarkdown text={item.content} animate={typeIds.current.has(item.id)} onTyping={onTyping} />
                   ) : (
                     <>
                       {item.image && item.annot ? (
