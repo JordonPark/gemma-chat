@@ -9,7 +9,8 @@
 import { Directory, File, Paths } from 'expo-file-system';
 import { ImageManipulator, SaveFormat } from 'expo-image-manipulator';
 import * as ImagePicker from 'expo-image-picker';
-import { DownloadCancelled, MAX_ATTEMPTS, MODEL_RELEASE_URL, downloadPart, sleep } from './modelDownload';
+import { DownloadCancelled, MODEL_RELEASE_URL, speedMeter } from './modelDownload';
+import { RangedCancelled, downloadRanged } from './rangedDownload';
 import { ensureDir, formatBytes, isGguf, readMagic, toNativePath, type OnProgress } from './modelStore';
 
 type VisionManifest = { format: number; name: string; size: number; sha256: string };
@@ -50,60 +51,49 @@ async function fetchVisionManifest(signal: AbortSignal): Promise<VisionManifest>
   return m;
 }
 
-/** 비전 프로젝터를 받아 설치한다 (실패하면 3번까지 다시 시도) */
+/** 비전 프로젝터를 받아 설치한다. 32MB 조각 단위로 받고, 끊겨도 받은 곳부터 이어 받는다. */
 export async function downloadVision(onProgress: OnProgress, signal: AbortSignal): Promise<InstalledVision> {
   onProgress({ stage: 'checking', ratio: 0, detail: '이미지 인식 파일 확인 중' });
   const m = await fetchVisionManifest(signal);
 
+  const dir = visionDir();
+  ensureDir(dir);
+  // 이전에 받다 만 파일은 이어 받는다 (다른 파일이면 지운다)
+  const partial = new File(dir, `.${m.name}.part`);
+  for (const e of dir.list()) if (e instanceof File && e.uri !== partial.uri) e.delete();
+
+  const have = partial.exists ? partial.size ?? 0 : 0;
   const free = Paths.availableDiskSpace;
-  if (free > 0 && free < m.size + 100 * 1024 * 1024) {
-    throw new Error(`저장 공간 부족: 약 ${formatBytes(m.size)} 필요, 남은 공간 ${formatBytes(free)}`);
+  if (free > 0 && free < m.size - have + 100 * 1024 * 1024) {
+    throw new Error(`저장 공간 부족: 약 ${formatBytes(m.size - have)} 필요, 남은 공간 ${formatBytes(free)}`);
   }
 
-  const dir = visionDir();
-  if (dir.exists) dir.delete();
-  ensureDir(dir);
-  const url = `${MODEL_RELEASE_URL}/${encodeURIComponent(m.name)}`;
-  const tmp = new File(dir, `.${m.name}.part`);
-
-  for (let attempt = 1; ; attempt++) {
-    let last = 0;
-    try {
-      if (tmp.exists) tmp.delete();
-      onProgress({ stage: 'downloading', ratio: 0, detail: `연결 중…${attempt > 1 ? ` (재시도 ${attempt - 1})` : ''}` });
-      await downloadPart(
-        url,
-        tmp,
-        (n) => {
-          const now = Date.now();
-          if (now - last < 250) return;
-          last = now;
-          onProgress({ stage: 'downloading', ratio: n / m.size, detail: `${formatBytes(n)} / ${formatBytes(m.size)}` });
-        },
-        signal,
-      );
-      break;
-    } catch (e: any) {
-      if (e instanceof DownloadCancelled || signal.aborted) {
-        if (dir.exists) dir.delete();
-        throw new DownloadCancelled();
-      }
-      if (attempt >= MAX_ATTEMPTS) {
-        if (dir.exists) dir.delete();
-        throw new Error(`이미지 인식 파일 다운로드 실패: ${e?.message ?? e}`);
-      }
-      await sleep(3000 * attempt);
-    }
+  const speed = speedMeter();
+  try {
+    await downloadRanged(
+      [{ url: `${MODEL_RELEASE_URL}/${encodeURIComponent(m.name)}`, size: m.size }],
+      partial,
+      new File(dir, '.chunk'),
+      (done, total, note) =>
+        onProgress({
+          stage: 'downloading',
+          ratio: total ? done / total : 0,
+          detail: note ?? `${formatBytes(done)} / ${formatBytes(total)}${speed(done)}`,
+        }),
+      signal,
+    );
+  } catch (e: any) {
+    if (e instanceof RangedCancelled || signal.aborted) throw new DownloadCancelled();
+    throw new Error(`이미지 인식 파일 다운로드 실패: ${e?.message ?? e}\n다시 시도하면 받은 곳부터 이어 받습니다.`);
   }
 
   onProgress({ stage: 'verifying', ratio: 1, detail: 'SHA-256 검사 중' });
-  const hash = (await tmp.digest('SHA-256')).toLowerCase();
-  if (tmp.size !== m.size || hash !== m.sha256.toLowerCase() || !isGguf(await readMagic(tmp))) {
-    dir.delete();
+  const hash = (await partial.digest('SHA-256')).toLowerCase();
+  if (partial.size !== m.size || hash !== m.sha256.toLowerCase() || !isGguf(await readMagic(partial))) {
+    partial.delete();
     throw new Error('받은 이미지 인식 파일이 손상되었습니다. 다시 시도하세요.');
   }
-  const dest = new File(dir, m.name);
-  await tmp.move(dest);
+  await partial.move(new File(dir, m.name));
   onProgress({ stage: 'done', ratio: 1 });
   const installed = new File(dir, m.name);
   return { path: toNativePath(installed.uri), name: installed.name, size: installed.size ?? 0 };
