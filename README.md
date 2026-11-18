@@ -129,7 +129,7 @@ Gemma 3 4B는 이미지를 이해하는 모델입니다. 비전 프로젝터(`mm
 입력창에 그릴 내용을 적고 **🎨**를 누르거나, "…그려줘", "…일러스트 만들어줘"라고 보냅니다.
 
 ### iPhone: 그림 모델 (Stable Diffusion, 기기 안에서 생성)
-- **모델:** **Counterfeit-V3.0**을 씁니다. Stable Diffusion 1.5 기반의 일러스트·애니 특화 모델이고, `coreml-community`가 Core ML(`split_einsum`)로 변환한 것입니다. 이 변환본에는 안전 검사가 없어서 Apple SD 1.5 패키지의 SafetyChecker를 함께 넣었고, 쓰지 않는 VAE 인코더는 뺐습니다. 크기는 약 2.7GB입니다(16bit, 2GB 미만 조각으로 나눠 배포). Release에는 *Actions › Publish image model*이 올립니다. 이전에 받은 기본 SD 1.5가 있으면 **설정 › 그림 모델 › 새 그림 모델로 교체**로 바꿀 수 있습니다.
+- **모델:** **Counterfeit-V3.0**을 씁니다. Stable Diffusion 1.5 기반의 일러스트·애니 특화 모델입니다. *Actions › Convert image model to 6-bit*가 원본 가중치를 Apple `ml-stable-diffusion`으로 Core ML(`split_einsum_v2`)로 변환하고, Unet·텍스트 인코더·안전 검사기(SafetyChecker)를 **6bit 팔레트로 압축**해 Release에 올립니다. 크기는 약 1.1GB(16bit 변환본 2.5GB). 이전 그림 모델이 있으면 **설정 › 그림 모델 › 새 그림 모델로 교체**로 바꿀 수 있습니다.
 - **처음 설치:** 한 번에 1/3 채팅 모델 → 2/3 사진 인식(비전) → 3/3 그림 모델(iPhone만, 준비 1~3분 포함)을 받습니다. Android는 1/2 채팅 → 2/2 사진 인식. 글자 읽기(OCR)는 기기 내장이라 받을 것이 없습니다. 받을 용량은 Release의 manifest를 읽어 화면에 표시합니다. 사진 인식·그림 모델이 실패하거나 취소돼도 채팅은 바로 시작하고, 그 기능을 처음 쓸 때 다시 받습니다.
 - **그림체:** 요청에 그림체를 말하면("픽셀아트로 …") 바로 그리고, 말하지 않으면 채팅으로 **"어떤 그림체로 그릴까요?"**라고 묻습니다. 버튼으로 고르거나 "애니로"처럼 답하면 됩니다. 그림체는 애니·웹툰, 3D 캐릭터, 플랫 일러스트, 색연필, 픽셀아트, 사진처럼, 수채화 동화 중에서 고릅니다(`src/imageGen.ts`의 `DRAW_STYLES`).
 - **흐름:**
