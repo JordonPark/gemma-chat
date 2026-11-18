@@ -45,6 +45,19 @@ export function findInstalledImageModel(): string | null {
   return r ? toNativePath(r.uri) : null;
 }
 
+/**
+ * 쓰지 않는 부분 지우기: VAEEncoder 는 그림→그림 변환에만 쓰여서 이 앱에는 필요 없다 (파이프라인도 없으면 건너뜀).
+ * 받다 만 zip·조각 잔여물도 지운다.
+ */
+export function trimImageModel() {
+  const dir = sdDir();
+  const r = findResourcesDir(dir);
+  if (!r) return;
+  const enc = new Directory(r, 'VAEEncoder.mlmodelc');
+  if (enc.exists) enc.delete();
+  for (const e of dir.list()) if (e instanceof File && e.name.startsWith('.')) e.delete();
+}
+
 export function deleteImageModel() {
   const d = sdDir();
   if (d.exists) d.delete();
@@ -117,6 +130,7 @@ export async function downloadImageModel(onProgress: OnProgress, signal: AbortSi
     sub.remove();
   }
   zip.delete();
+  trimImageModel();
   const res = findInstalledImageModel();
   if (!res) {
     deleteImageModel();

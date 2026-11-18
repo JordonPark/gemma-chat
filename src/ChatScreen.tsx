@@ -44,6 +44,7 @@ import { colors } from './theme';
 import { describeVision, useVision, type VisionStatus } from './useVision';
 import { deleteImages, pickImage, type ImageSource } from './vision';
 import { isOcrAvailable, recognizeText } from '../modules/expo-ocr';
+import { clearTempFiles, storageBreakdown } from './storageInfo';
 
 const uid = () => `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
 
@@ -740,6 +741,8 @@ function SettingsModal({
           </Pressable>
         ) : null}
 
+        <StorageSection visible busy={visionStatus.kind === 'downloading' || imageModelStatus.kind === 'downloading'} />
+
         {imageModelStatus.kind !== 'unsupported' ? (
           <>
             <Text style={[styles.label, { marginTop: 24 }]}>그림 모델 (수채화 동화풍)</Text>
@@ -784,6 +787,43 @@ function SettingsModal({
         </Pressable>
       </ScrollView>
     </Modal>
+  );
+}
+
+/** 설정: 앱이 쓰는 저장 공간 내역 */
+function StorageSection({ visible, busy }: { visible: boolean; busy: boolean }) {
+  const [info, setInfo] = useState(() => storageBreakdown());
+  useEffect(() => {
+    if (visible) setInfo(storageBreakdown());
+  }, [visible]);
+  const temp = info.items.find((i) => i.key === 'temp');
+  return (
+    <View style={{ marginTop: 24, gap: 6 }}>
+      <Text style={styles.label}>저장 공간 · 합계 {formatBytes(info.total)}</Text>
+      {info.items.map((i) => (
+        <View key={i.key} style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
+          <Text style={styles.hint}>{i.label}</Text>
+          <Text style={styles.hint}>{formatBytes(i.bytes)}</Text>
+        </View>
+      ))}
+      <Text style={styles.hint}>기기 남은 공간 {formatBytes(info.free)}</Text>
+      {temp ? (
+        <Pressable
+          style={[styles.send, { backgroundColor: colors.border, marginTop: 4 }]}
+          disabled={busy}
+          onPress={() => {
+            const freed = clearTempFiles();
+            setInfo(storageBreakdown());
+            Alert.alert('정리 완료', `${formatBytes(freed)} 를 비웠습니다.`);
+          }}
+        >
+          <Text style={[styles.sendText, { color: colors.text }]}>
+            {busy ? '받는 중에는 정리할 수 없습니다' : `임시 파일 정리 (${formatBytes(temp.bytes)})`}
+          </Text>
+        </Pressable>
+      ) : null}
+      <Text style={styles.hint}>필요 없는 기능의 파일은 아래에서 각각 지울 수 있습니다. 지운 기능은 다시 쓸 때 다시 받습니다.</Text>
+    </View>
   );
 }
 
