@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ComponentRef } from 'react';
+import { useRef, useState, type ComponentRef } from 'react';
 import {
   Alert,
   FlatList,
@@ -41,7 +41,7 @@ import { LeftDrawer } from './LeftDrawer';
 import { AnnotatedPhoto } from './AnnotatedPhoto';
 import { analysisHeader, analyzePhoto, needsTranslation, type PhotoAnalysis, type PhotoAnnotations } from './photoAnnotate';
 import { SOLVE_HEADER, arithmeticNote, isSolveRequest } from './problemSolve';
-import { clearMemories, loadMemories, mightNeedTool, removeMemory, runTool } from './tools';
+import { mightNeedTool, runTool } from './tools';
 import { getChatLayout, getFoldInsets, minInlineComposerWidth, type Division } from './foldLayout';
 import { deletePictures } from './legacyDrawing';
 import { ImageViewer, type ImagePreview } from './ImageViewer';
@@ -49,7 +49,7 @@ import { ContentSafetyError, cooldownSeconds, recordStrike } from './contentSafe
 import { LegalInfo } from './LegalInfo';
 import { ReportContent } from './ReportContent';
 import { APP_NAME, SUPPORT_BASE_URL } from './storeConfig';
-import { formatBytes, type ImportProgress, type InstalledModel } from './modelStore';
+import type { InstalledModel } from './modelStore';
 import { Markdown } from './Markdown';
 import { UpdateBanner, checkForUpdateInteractive, describeAppVersion } from './UpdateBanner';
 import { loadChatLibrary, saveChatLibrary } from './storage';
@@ -58,8 +58,6 @@ import { describeVision, useVision, type VisionStatus } from './useVision';
 import { deleteImages, pickImage, type ImageSource } from './vision';
 import { isOcrAvailable, isScanAvailable, recognizeText, scanText } from '../modules/expo-ocr';
 import * as ImagePicker from 'expo-image-picker';
-import { clearTempFiles, storageBreakdown } from './storageInfo';
-import { DownloadCancelled, checkSmallerModel, downloadModel, formatDownloadEta, type ModelUpgrade } from './modelDownload';
 
 const uid = () => `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
 // SwiftUI's navigation stack already lays out the hosted content inside its safe area.
@@ -83,7 +81,7 @@ const DRAW_INTENT =
 /** 사진 설명이 걸려도 기기 분석 결과조차 보여 주면 안 되는 범주 */
 const SEVERE = new Set(['sexual_minors', 'sexual_explicit', 'violence', 'extremism', 'self_harm']);
 
-export function ChatScreen({ model, settings, gpuInfo, initialInput = '', onChangeSettings, onRemoveModel, onModelReplaced }: Props) {
+export function ChatScreen({ settings, gpuInfo, initialInput = '', onChangeSettings }: Props) {
   const { fontScale } = useWindowDimensions();
   const [library, setLibrary] = useState(loadChatLibrary);
   const libraryRef = useRef(library);
@@ -110,48 +108,6 @@ export function ChatScreen({ model, settings, gpuInfo, initialInput = '', onChan
   const followLatest = useRef(true);
   const vision = useVision(settings);
 
-  // ── 더 작은 채팅 모델로 교체 (설정을 열 때 한 번 확인) ──
-  const [upgrade, setUpgrade] = useState<ModelUpgrade | null>(null);
-  const [upgradeDl, setUpgradeDl] = useState<{ progress: ImportProgress | null } | null>(null);
-  const upgradeChecked = useRef(false);
-  const upgradeAbort = useRef<AbortController | null>(null);
-  useEffect(() => {
-    if (!showSettings || upgradeChecked.current) return;
-    upgradeChecked.current = true;
-    checkSmallerModel(model).then(setUpgrade);
-  }, [showSettings, model]);
-  const startUpgrade = () => {
-    if (!upgrade || upgradeDl) return;
-    Alert.alert(
-      '더 작은 모델로 교체',
-      `같은 Gemma 3 4B 에서 단어 사전 부분만 더 압축한 모델입니다 (답변 품질은 거의 같음).\n\n` +
-        `${formatBytes(upgrade.size)} 를 받고, 끝나면 지금 모델을 지워 ${formatBytes(upgrade.saving)} 를 아낍니다. ` +
-        `받는 동안 대화는 계속할 수 있습니다. Wi-Fi 권장.`,
-      [
-        { text: '취소', style: 'cancel' },
-        {
-          text: '교체',
-          onPress: async () => {
-            const ac = new AbortController();
-            upgradeAbort.current = ac;
-            setUpgradeDl({ progress: null });
-            await activateKeepAwakeAsync('model-upgrade');
-            try {
-              const m = await downloadModel((p) => setUpgradeDl({ progress: p }), ac.signal);
-              setUpgrade(null);
-              onModelReplaced(m);
-            } catch (e: any) {
-              if (!(e instanceof DownloadCancelled)) Alert.alert('모델 교체 실패', `지금 모델은 그대로입니다.\n${e?.message ?? e}`);
-            } finally {
-              deactivateKeepAwake('model-upgrade');
-              upgradeAbort.current = null;
-              setUpgradeDl(null);
-            }
-          },
-        },
-      ],
-    );
-  };
 
   const busy = streaming !== null || workingWithPhoto;
   const canSend = !!input.trim() || !!pendingImage;
@@ -532,11 +488,6 @@ export function ChatScreen({ model, settings, gpuInfo, initialInput = '', onChan
       ? [...messages, { id: '__streaming__', role: 'assistant', content: streaming || '…' }]
       : messages;
 
-  const upgradeTransfer = upgradeDl?.progress?.transfer;
-  const upgradeDetail = upgradeDl?.progress?.detail ?? (upgradeTransfer
-    ? `${formatBytes(upgradeTransfer.received)} / ${formatBytes(upgradeTransfer.total)}`
-      + (upgradeTransfer.secondsLeft === undefined ? '' : ` · ${formatDownloadEta(upgradeTransfer.secondsLeft)}`)
-    : '');
 
   const openLibrary = () => {
     Keyboard.dismiss();
@@ -636,22 +587,6 @@ export function ChatScreen({ model, settings, gpuInfo, initialInput = '', onChan
 
             <UpdateBanner busy={busy} />
             <VisionDownloadBar status={vision.status} onCancel={vision.cancelDownload} />
-            {upgradeDl ? (
-              <View style={styles.dlBar}>
-                <View style={styles.flex}>
-                  <Text style={styles.dlText} numberOfLines={1}>
-                    작은 모델 받는 중 {Math.round((upgradeDl.progress?.ratio ?? 0) * 100)}%
-                    {upgradeDetail ? ` · ${upgradeDetail}` : ''}
-                  </Text>
-                  <View style={styles.dlTrack}>
-                    <View style={[styles.dlFill, { width: `${Math.round((upgradeDl.progress?.ratio ?? 0) * 100)}%` }]} />
-                  </View>
-                </View>
-                <Pressable onPress={() => upgradeAbort.current?.abort()} style={styles.hBtn}>
-                  <Text style={[styles.hBtnText, { color: colors.danger }]}>취소</Text>
-                </Pressable>
-              </View>
-            ) : null}
 
             <FlatList
               key={activeChat.id}
@@ -853,25 +788,12 @@ export function ChatScreen({ model, settings, gpuInfo, initialInput = '', onChan
 
       {showSettings ? (
         <SettingsModal
-          model={model}
           settings={settings}
           visionStatus={vision.status}
-          onDownloadVision={vision.download}
-          onRemoveVision={vision.remove}
-          upgrade={upgrade}
-          upgrading={!!upgradeDl}
-          onUpgrade={() => {
-            setShowSettings(false);
-            startUpgrade();
-          }}
           onClose={() => setShowSettings(false)}
           onSave={(s) => {
             setShowSettings(false);
             onChangeSettings(s);
-          }}
-          onRemoveModel={() => {
-            setShowSettings(false);
-            onRemoveModel();
           }}
         />
       ) : null}
@@ -900,29 +822,15 @@ function ChatAction({ icon, label, disabled, onPress }: {
 }
 
 function SettingsModal({
-  model,
   settings,
   visionStatus,
-  onDownloadVision,
-  onRemoveVision,
-  upgrade,
-  upgrading,
-  onUpgrade,
   onClose,
   onSave,
-  onRemoveModel,
 }: {
-  model: InstalledModel;
   settings: Settings;
   visionStatus: VisionStatus;
-  onDownloadVision: () => void;
-  onRemoveVision: () => void;
-  upgrade: ModelUpgrade | null;
-  upgrading: boolean;
-  onUpgrade: () => void;
   onClose: () => void;
   onSave: (s: Settings) => void;
-  onRemoveModel: () => void;
 }) {
   const [s, setS] = useState(settings);
   const num = (v: string, d: number) => (Number.isFinite(Number(v)) && v.trim() !== '' ? Number(v) : d);
@@ -1024,56 +932,7 @@ function SettingsModal({
           <Text style={[styles.sendText, { color: colors.text }]}>업데이트 확인</Text>
         </Pressable>
 
-        <Text style={[styles.label, { marginTop: 24 }]}>이미지 인식 파일</Text>
-        <Text style={styles.hint}>{describeVision(visionStatus)}</Text>
-        {visionStatus.kind === 'missing' ? (
-          <Pressable style={[styles.send, { marginTop: 8 }]} onPress={onDownloadVision}>
-            <Text style={styles.sendText}>이미지 인식 파일 받기 (약 0.85GB)</Text>
-          </Pressable>
-        ) : visionStatus.kind !== 'downloading' && visionStatus.kind !== 'checking' ? (
-          <Pressable
-            style={[styles.send, { backgroundColor: colors.border, marginTop: 8 }]}
-            onPress={() =>
-              Alert.alert('이미지 인식 파일 삭제', '약 0.85GB 를 비웁니다. 사진 기능을 다시 쓰려면 다시 받아야 합니다.', [
-                { text: '취소', style: 'cancel' },
-                { text: '삭제', style: 'destructive', onPress: onRemoveVision },
-              ])
-            }
-          >
-            <Text style={[styles.sendText, { color: colors.text }]}>이미지 인식 파일 삭제</Text>
-          </Pressable>
-        ) : null}
-
-        <MemorySection visible />
-
-        <StorageSection visible busy={upgrading || visionStatus.kind === 'downloading'} />
-
-        <Text style={[styles.label, { marginTop: 24 }]}>모델</Text>
-        <Text style={styles.hint}>
-          {model.name} ({formatBytes(model.size)})
-        </Text>
-        {upgrade || upgrading ? (
-          <Pressable
-            style={[styles.send, { marginTop: 8 }, upgrading && styles.off]}
-            disabled={upgrading}
-            onPress={onUpgrade}
-          >
-            <Text style={styles.sendText}>
-              {upgrading ? '작은 모델 받는 중…' : `더 작은 모델로 교체 (−${formatBytes(upgrade!.saving)})`}
-            </Text>
-          </Pressable>
-        ) : null}
-        <Pressable
-          style={[styles.send, { backgroundColor: colors.danger, marginTop: 8 }]}
-          onPress={() =>
-            Alert.alert('모델 삭제', '기기에서 모델 파일을 삭제합니다. 다시 쓰려면 파일을 다시 넣어야 합니다.', [
-              { text: '취소', style: 'cancel' },
-              { text: '삭제', style: 'destructive', onPress: onRemoveModel },
-            ])
-          }
-        >
-          <Text style={styles.sendText}>모델 삭제 / 교체</Text>
-        </Pressable>
+        <View style={{ height: 16 }} />
         <LegalInfo />
       </ScrollView>
     </Modal>
@@ -1081,95 +940,6 @@ function SettingsModal({
 }
 
 /** 설정: 앱이 쓰는 저장 공간 내역 */
-/** "기억해 줘" 로 저장한 내용 보기·지우기 */
-function MemorySection({ visible }: { visible: boolean }) {
-  const [list, setList] = useState(() => loadMemories());
-  useEffect(() => {
-    if (visible) setList(loadMemories());
-  }, [visible]);
-  return (
-    <View style={{ marginTop: 24, gap: 6 }}>
-      <Text style={styles.label}>기억 ({list.length})</Text>
-      {list.length === 0 ? (
-        <Text style={styles.hint}>채팅에서 "○○ 기억해 줘" 라고 하면 여기에 저장되고, 이후 대화에서 기억합니다. 이 기기 안에만 저장됩니다.</Text>
-      ) : (
-        <>
-          {list.map((m) => (
-            <View key={m.id} style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-              <Text style={[styles.hint, styles.flex, { color: colors.text }]}>• {m.text}</Text>
-              <Pressable
-                accessibilityRole="button"
-                accessibilityLabel={`${m.text} 지우기`}
-                hitSlop={8}
-                onPress={() => {
-                  removeMemory(m.id);
-                  setList(loadMemories());
-                }}
-              >
-                <Text style={[styles.hint, { color: colors.danger }]}>지우기</Text>
-              </Pressable>
-            </View>
-          ))}
-          <Pressable
-            style={[styles.send, { backgroundColor: colors.border, marginTop: 4 }]}
-            onPress={() =>
-              Alert.alert('기억 모두 지우기', '저장한 기억을 모두 지웁니다.', [
-                { text: '취소', style: 'cancel' },
-                {
-                  text: '모두 지우기',
-                  style: 'destructive',
-                  onPress: () => {
-                    clearMemories();
-                    setList([]);
-                  },
-                },
-              ])
-            }
-          >
-            <Text style={[styles.sendText, { color: colors.text }]}>기억 모두 지우기</Text>
-          </Pressable>
-        </>
-      )}
-    </View>
-  );
-}
-
-function StorageSection({ visible, busy }: { visible: boolean; busy: boolean }) {
-  const [info, setInfo] = useState(() => storageBreakdown());
-  useEffect(() => {
-    if (visible) setInfo(storageBreakdown());
-  }, [visible]);
-  const temp = info.items.find((i) => i.key === 'temp');
-  return (
-    <View style={{ marginTop: 24, gap: 6 }}>
-      <Text style={styles.label}>저장 공간 · 합계 {formatBytes(info.total)}</Text>
-      {info.items.map((i) => (
-        <View key={i.key} style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
-          <Text style={styles.hint}>{i.label}</Text>
-          <Text style={styles.hint}>{formatBytes(i.bytes)}</Text>
-        </View>
-      ))}
-      <Text style={styles.hint}>기기 남은 공간 {formatBytes(info.free)}</Text>
-      {temp ? (
-        <Pressable
-          style={[styles.send, { backgroundColor: colors.border, marginTop: 4 }]}
-          disabled={busy}
-          onPress={() => {
-            const freed = clearTempFiles();
-            setInfo(storageBreakdown());
-            Alert.alert('정리 완료', `${formatBytes(freed)} 를 비웠습니다.`);
-          }}
-        >
-          <Text style={[styles.sendText, { color: colors.text }]}>
-            {busy ? '받는 중에는 정리할 수 없습니다' : `임시 파일 정리 (${formatBytes(temp.bytes)})`}
-          </Text>
-        </Pressable>
-      ) : null}
-      <Text style={styles.hint}>필요 없는 기능의 파일은 아래에서 각각 지울 수 있습니다. 지운 기능은 다시 쓸 때 다시 받습니다.</Text>
-    </View>
-  );
-}
-
 function PhotoThumbnail({ uri, label, style, onOpen }: {
   uri: string;
   label: string;
