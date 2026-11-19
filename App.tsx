@@ -9,6 +9,7 @@ import { LegalConsent } from './src/LegalInfo';
 import { LoadingScreen } from './src/LoadingScreen';
 import { SetupScreen } from './src/SetupScreen';
 import { removeLegacyImageModel } from './src/legacyDrawing';
+import { describeStage, markIdle, markStage, takeLastCrash } from './src/crashGuard';
 import { acceptLowMemory, deviceMemoryBytes, formatMemory, shouldWarnLowMemory } from './src/deviceCheck';
 import { loadModel, unloadModel, type Settings } from './src/llm';
 import { deleteInstalledModels, findInstalledModel, type InstalledModel } from './src/modelStore';
@@ -25,6 +26,11 @@ type Phase =
 
 // 첫 실행 때 로딩 화면을 최소 이만큼은 보여 준다 (모델이 빨리 올라와도 화면이 깜빡이고 지나가지 않게)
 const MIN_SPLASH_MS = 2500;
+
+/** 메모리를 가장 적게 쓰는 설정 (갑자기 종료된 뒤 권함) */
+const LIGHT_SETTINGS = { nCtx: 2048, maxNewTokens: 512, useGpu: false } as const;
+const isLightSettings = (s: Settings) =>
+  s.nCtx <= LIGHT_SETTINGS.nCtx && s.maxNewTokens <= LIGHT_SETTINGS.maxNewTokens && !s.useGpu;
 
 export default function App() {
   const [acceptedTerms, setAcceptedTerms] = useState(hasAcceptedModelTerms);
@@ -45,12 +51,15 @@ export default function App() {
     async (model: InstalledModel, s: Settings, initialInput = '') => {
       setPhase({ kind: 'loading', model, pct: 0 });
       try {
+        markStage('load-model');
         const r = await loadModel(model.path, s, (pct) => setPhase({ kind: 'loading', model, pct }));
+        markIdle();
         const gpuInfo = r.gpu ? 'GPU' : s.useGpu ? `CPU (GPU 불가: ${r.reasonNoGPU || '미지원'})` : 'CPU';
         setPhase({ kind: 'loading', model, pct: 100 });
         await holdSplash();
         setPhase({ kind: 'ready', model, gpuInfo, initialInput });
       } catch (e: any) {
+        markIdle();
         firstLaunch.current = false;
         setPhase({ kind: 'error', model, message: String(e?.message ?? e) });
       }
@@ -71,7 +80,29 @@ export default function App() {
       return;
     }
     const m = await findInstalledModel();
-    if (m) startModel(m, settings);
+    // 지난번에 작업 도중 앱이 꺼졌으면(대부분 메모리 부족) 가벼운 설정을 권한다
+    let use = settings;
+    const crashed = takeLastCrash();
+    if (m && crashed && !isLightSettings(settings)) {
+      const light = await new Promise<boolean>((resolve) =>
+        Alert.alert(
+          '앱이 갑자기 종료되었어요',
+          `지난번에 ${describeStage(crashed)} 중에 앱이 꺼졌습니다. 기기 메모리가 부족했을 가능성이 커요.\n\n` +
+            '대화 길이를 "적게"로, GPU 가속을 끄면 메모리를 덜 써서 더 안정적입니다. 바꿀까요? (설정에서 언제든 되돌릴 수 있어요)',
+          [
+            { text: '그대로', style: 'cancel', onPress: () => resolve(false) },
+            { text: '가볍게 쓰기', onPress: () => resolve(true) },
+          ],
+          { cancelable: false },
+        ),
+      );
+      if (light) {
+        use = { ...settings, ...LIGHT_SETTINGS };
+        setSettings(use);
+        saveSettings(use);
+      }
+    }
+    if (m) startModel(m, use);
     else {
       await holdSplash();
       setPhase({ kind: 'setup' });

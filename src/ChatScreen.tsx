@@ -39,6 +39,7 @@ import { conversationName, hasConversationContent, makeConversation, removeTask,
 import { DuoToolbar, hasDuoToolbar } from './DuoToolbar';
 import { FoldAwareArea } from './FoldAwareArea';
 import { FadeIn, PressableScale, Segmented, TypingDots, smoothLayout } from './motion';
+import { markIdle, markStage } from './crashGuard';
 import { TypewriterMarkdown } from './Typewriter';
 import { LeftDrawer } from './LeftDrawer';
 import { AnnotatedPhoto } from './AnnotatedPhoto';
@@ -196,7 +197,12 @@ export function ChatScreen({ settings, initialInput = '', onChangeSettings }: Pr
   /** 사진 분석(글자 위치 + 물건 위치). 사진마다 한 번만 돌리고 결과를 재사용한다 */
   const annotJob = useRef<{ uri: string; job: Promise<PhotoAnalysis> } | null>(null);
   const analysisFor = (uri: string) => {
-    if (annotJob.current?.uri !== uri) annotJob.current = { uri, job: analyzePhoto(uri) };
+    if (annotJob.current?.uri !== uri) {
+      markStage('photo');
+      const job = analyzePhoto(uri);
+      job.finally(markIdle);
+      annotJob.current = { uri, job };
+    }
     return annotJob.current.job;
   };
   const [translatingId, setTranslatingId] = useState<string | null>(null);
@@ -337,6 +343,7 @@ export function ChatScreen({ settings, initialInput = '', onChangeSettings }: Pr
     let keptAwake = false;
     let answered = false;
     let replyStage = false;
+    let visionLoaded = false;
     try {
       if (pendingImage) {
         setWorkingWithPhoto(true);
@@ -383,7 +390,16 @@ export function ChatScreen({ settings, initialInput = '', onChangeSettings }: Pr
         isSolveRequest(userMsg.content, !!userMsg.image) ? '문제를 푸는 중…' : userMsg.image ? '사진을 분석하는 중…' : '답변을 준비하는 중…',
       );
       replyStage = true;
+      // 이미지 인식(약 1GB)은 사진을 보낼 때만 올리고, 답이 끝나면 내린다 (평소 대화의 메모리 절약)
+      if (userMsg.image && vision.status.kind === 'ready') {
+        setStreaming('이미지 인식을 준비하는 중…');
+        markStage('load-vision');
+        visionLoaded = await vision.load();
+        setStreaming('사진을 분석하는 중…');
+      }
+      markStage('generate');
       const { text: reply, stats: st } = await generateReply(history, settings);
+      markIdle();
       // 사진 답은 "분석되었습니다." + 기기에서 찾은 물건·글자 요약으로 시작한다
       // 문제 풀이면 풀이 속 계산을 기기 계산기로 다시 확인해, 다른 곳이 있으면 아래에 알려 준다
       const solving = isSolveRequest(userMsg.content, !!userMsg.image);
@@ -419,6 +435,8 @@ export function ChatScreen({ settings, initialInput = '', onChangeSettings }: Pr
       }
     } finally {
       if (keptAwake) deactivateKeepAwake('gen');
+      markIdle();
+      if (visionLoaded) vision.unload();
       workPending.current = false;
       setWorkingWithPhoto(false);
       setStreaming(null);
@@ -966,7 +984,7 @@ function SettingsModal({
           <View style={styles.flex}>
             <Text style={styles.label}>이미지 인식 (사진 첨부)</Text>
             <Text style={styles.hint}>
-              상태: {describeVision(visionStatus)}. 메모리를 약 1GB 더 씁니다. 앱이 꺼지면 끄세요.
+              상태: {describeVision(visionStatus)}. 사진을 보낼 때만 잠깐 메모리(약 1GB)를 씁니다.
             </Text>
           </View>
           <Switch value={s.vision} onValueChange={(v) => setS({ ...s, vision: v })} />

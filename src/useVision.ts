@@ -1,5 +1,7 @@
 /**
- * 이미지 인식 상태 관리: 파일 유무 확인 → (설정이 켜져 있으면) 모델에 붙이기 / 받기 / 끄기.
+ * 이미지 인식 상태 관리: 파일 유무 확인 / 받기 / 끄기.
+ * 메모리(약 1GB)를 아끼려고 앱을 켤 때 미리 올리지 않고, 사진을 보낼 때만 load() 로 올렸다가 답이 끝나면 unload() 로 내린다.
+ * status 'ready' = 파일이 있고 설정이 켜져 있어 쓸 수 있음 (메모리에 올라가 있다는 뜻은 아님)
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Alert } from 'react-native';
@@ -29,15 +31,29 @@ export function useVision(settings: Settings) {
       await disableVision().catch(() => {});
       return setStatus({ kind: 'off' });
     }
-    if (isVisionReady()) return setStatus({ kind: 'ready' });
-    setStatus({ kind: 'loading' });
+    // 설정(GPU 등)이 바뀌었으면 올라가 있던 것은 내려 두고, 다음에 쓸 때 새 설정으로 올린다
+    await disableVision().catch(() => {});
+    setStatus({ kind: 'ready' });
+  }, [settings.vision, settings.useGpu]);
+
+  /** 사진을 보내기 직전에 메모리에 올린다. 실패하면 오류 상태로 두고 false */
+  const load = useCallback(async (): Promise<boolean> => {
+    if (isVisionReady()) return true;
+    const v = findInstalledVision();
+    if (!v || !settings.vision) return false;
     try {
       await enableVision(v.path, settings.useGpu);
-      setStatus({ kind: 'ready' });
+      return true;
     } catch (e: any) {
       setStatus({ kind: 'error', message: String(e?.message ?? e) });
+      return false;
     }
   }, [settings.vision, settings.useGpu]);
+
+  /** 사진 답이 끝나면 내려서 메모리를 돌려준다 */
+  const unload = useCallback(async () => {
+    await disableVision().catch(() => {});
+  }, []);
 
   useEffect(() => {
     attach();
@@ -112,7 +128,7 @@ export function useVision(settings: Settings) {
     }
   }, [status, download, attach]);
 
-  return { status, download, cancelDownload, remove, ensureReady, retry: attach };
+  return { status, download, cancelDownload, remove, ensureReady, retry: attach, load, unload };
 }
 
 export function describeVision(s: VisionStatus): string {
