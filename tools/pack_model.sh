@@ -54,7 +54,7 @@ cat <<MSG
   (B) 바로 기기로 복사
       Android: USB 연결 후 $OUT/ 안의 파일 전부를 Download 폴더로 복사
                (또는 adb push $OUT/. /sdcard/Download/gemma/)
-      iPhone : Finder > iPhone > 파일 > Gemma Chat 으로 드래그 (또는 AirDrop → 파일 앱)
+      iPhone : Finder > iPhone > 파일 > My Buddy Offline으로 드래그 (또는 AirDrop → 파일 앱)
 
 앱에서 "모델 파일 선택"으로 조각 전부 + SHA256SUMS 를 함께 고르면
 기기 안에서 이어 붙이고 검증해서 설치합니다.

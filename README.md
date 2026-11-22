@@ -1,4 +1,4 @@
-# Gemma Chat — 온디바이스 챗봇 (Android / iOS)
+# My Buddy Offline — 온디바이스 챗봇 (Android / iOS)
 
 `google/gemma-3-4b-it-qat-q4_0-gguf` 모델을 **기기 안에서만** 실행하는 챗봇 앱입니다.
 
@@ -90,7 +90,7 @@ gh release download model-v1 --repo <owner>/<repo> -D model-dist
 3. 설치가 끝나면 원본 조각은 지워도 됩니다.
 
 **iOS**
-- 방법 A (권장, 저장 공간을 덜 씀): Mac Finder에서 iPhone → *파일* 탭 → **Gemma Chat**에 `model-dist/` 파일을 드래그합니다. 파일 앱 › *나의 iPhone* › *Gemma Chat*으로 복사해도 됩니다. 앱 화면의 **"이 파일들로 설치"**를 누르면 앱이 조각을 옮겨 붙이고, 끝나면 조각을 자동으로 지웁니다.
+- 방법 A (권장, 저장 공간을 덜 씀): Mac Finder에서 iPhone → *파일* 탭 → **My Buddy Offline**에 `model-dist/` 파일을 드래그합니다. 파일 앱 › *나의 iPhone* › *My Buddy Offline*으로 복사해도 됩니다. 앱 화면의 **"이 파일들로 설치"**를 누르면 앱이 조각을 옮겨 붙이고, 끝나면 조각을 자동으로 지웁니다.
 - 방법 B: **"모델 파일 선택"**에서 iCloud 등 다른 위치의 파일을 고릅니다. 이 경우 iOS가 임시 사본을 만들어 공간이 일시적으로 2배 더 필요합니다.
 
 지원하는 입력 형식:
@@ -184,7 +184,7 @@ npm run android:offline
 ```
 
 **PC에 Android Studio가 없어도 됩니다.** `main`에 앱 코드를 push하면 GitHub Actions(*Android APK*)가 APK를 빌드합니다. 결과는 아래 링크에 올라가며, GitHub 로그인 없이 누구나 받을 수 있습니다.
-https://github.com/JordonPark/gemma-chat/releases/download/android-latest/GemmaChat.apk
+https://github.com/JordonPark/gemma-chat/releases/download/android-latest/MyBuddyOffline.apk
 
 휴대폰에서 이 링크를 열어 받고, *출처를 알 수 없는 앱 설치*를 허용하면 설치됩니다. 이 APK는 디버그 키로 서명한 테스트·사내 배포용입니다.
 
@@ -205,13 +205,13 @@ npm run ios:release
 Mac이 없으면 GitHub Actions의 macOS 서버가 **서명 없는 .ipa**를 빌드하고, Windows의 [Sideloadly](https://sideloadly.io)가 무료 Apple ID로 서명해서 설치합니다.
 
 1. **빌드:** `main`에 앱 코드를 push하면 자동으로 빌드됩니다. 저장소 *Actions › iOS unsigned IPA › Run workflow*로 직접 실행할 수도 있습니다. 25~40분 걸립니다.
-2. **다운로드:** 실행 페이지 하단 *Artifacts*에서 `GemmaChat-unsigned-ipa`를 받아 압축을 풀면 `GemmaChat-unsigned.ipa`가 나옵니다.
+2. **다운로드:** 실행 페이지 하단 *Artifacts*에서 `MyBuddyOffline-unsigned-ipa`를 받아 압축을 풀면 `MyBuddyOffline-unsigned.ipa`가 나옵니다.
 3. **Windows 준비:** Apple 웹사이트에서 받은 **iTunes**와 **iCloud**를 설치합니다(Microsoft Store 버전 말고 apple.com 버전 권장). 그다음 Sideloadly를 설치합니다.
 4. **설치:** iPhone을 USB로 연결하고 "이 컴퓨터 신뢰"를 누릅니다. Sideloadly에 .ipa를 끌어다 놓고, Apple ID를 입력한 뒤 *Start*를 누릅니다.
 5. **iPhone 설정:**
    - *설정 › 개인정보 보호 및 보안 › 개발자 모드*를 켜고 재시동합니다.
    - *설정 › 일반 › VPN 및 기기 관리*에서 내 Apple ID 개발자를 *신뢰*합니다.
-6. **모델:** Wi-Fi에서 용량을 확인하고 다운로드를 시작합니다. 인터넷 없이 넣으려면 iTunes(또는 Apple Devices) › iPhone › *파일 공유* › **Gemma Chat**에 `model-dist/`의 조각과 `SHA256SUMS`를 끌어다 놓고, 앱의 *인터넷 없이 파일로 직접 설치 › 이 파일들로 설치*를 누릅니다.
+6. **모델:** Wi-Fi에서 용량을 확인하고 다운로드를 시작합니다. 인터넷 없이 넣으려면 iTunes(또는 Apple Devices) › iPhone › *파일 공유* › **My Buddy Offline**에 `model-dist/`의 조각과 `SHA256SUMS`를 끌어다 놓고, 앱의 *인터넷 없이 파일로 직접 설치 › 이 파일들로 설치*를 누릅니다.
 
 무료 Apple ID의 제약:
 - 설치한 앱은 **7일 후 만료**됩니다. Sideloadly로 다시 설치하면 되고, 앱 데이터(설치한 모델)는 유지됩니다.
@@ -312,7 +312,7 @@ app.config.ts           OFFLINE_ONLY 빌드 시 INTERNET 제거, 파일 공유(i
 
 ## 스토어 제출용 빌드
 
-GitHub 테스트 빌드와 별도로 EAS의 `store` 프로필을 사용합니다. 이 프로필은 My Buddy를 기본 표시 이름으로 사용하며, OTA를 끄고 스토어 배포용으로 빌드합니다. 공개 이름을 변경하려면 EAS Production 환경의 `EXPO_PUBLIC_STORE_NAME`을 지정하세요.
+GitHub 테스트 빌드와 별도로 EAS의 `store` 프로필을 사용합니다. 두 빌드의 표시 이름은 `src/appRelease.json`의 **My Buddy Offline**을 사용합니다. `store` 프로필은 OTA를 끄고 스토어 배포용으로 빌드합니다.
 
 ### 비공개 접수 서비스 배포
 

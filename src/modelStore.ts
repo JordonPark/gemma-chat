@@ -279,7 +279,7 @@ export async function pickModelFiles(): Promise<File[] | null> {
 }
 
 /**
- * iOS: Finder(맥) 또는 파일 앱 > "나의 iPhone" > Gemma Chat 폴더에 직접 넣은 파일들.
+ * iOS: Finder(맥) 또는 파일 앱 > "나의 iPhone" > 앱 폴더에 직접 넣은 파일들.
  * (Documents 최상위의 파일만 대상, models/ 등 하위 폴더는 제외)
  */
 export function listInboxFiles(): File[] {

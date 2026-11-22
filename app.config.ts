@@ -32,7 +32,7 @@ if (storeBuild || supportUrl) {
 const otaEnabled = !!easProjectId && !offlineOnly && !storeBuild;
 
 const config: ExpoConfig = {
-  name: storeBuild ? (process.env.EXPO_PUBLIC_STORE_NAME?.trim() || 'My Buddy') : 'Gemma Chat',
+  name: release.name,
   slug: 'gemma-chat',
   ...(easOwner ? { owner: easOwner } : {}),
   // 네이티브 변경(라이브러리·권한) 때마다 올린다 → OTA 업데이트가 맞는 앱에만 간다
@@ -44,6 +44,7 @@ const config: ExpoConfig = {
   // 1.6.0: 스토어 빌드 및 iOS 그림 안전 검사 필수화
   //        이후 그림 그리기 기능과 modules/expo-sd 제거 (JS 는 기존 1.6.0 빌드와도 호환)
   // 1.7.0: iOS 27.1 기본 탐색 막대 및 iPhone Duo 세로 도구 버튼
+  // 1.7.1: 홈 화면과 앱 내 표시 이름을 My Buddy Offline으로 변경
   version: release.version,
   orientation: 'portrait',
   icon: './assets/icon.png',

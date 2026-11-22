@@ -1,6 +1,6 @@
 # 서명 없는 iOS .ipa 빌드 (무료 Apple ID + Sideloadly 로 설치하기 위함)
 #
-# 결과물: Actions 실행 페이지 하단 Artifacts > GemmaChat-unsigned-ipa
+# 결과물: Actions 실행 페이지 하단 Artifacts > MyBuddyOffline-unsigned-ipa
 # 설치:   Windows 에서 Sideloadly 로 .ipa 를 iPhone 에 설치 (README "iOS — Windows + 무료 Apple ID" 참고)
 name: iOS unsigned IPA
 
@@ -65,9 +65,17 @@ jobs:
 
       - name: Build (Release, no code signing)
         run: |
+          shopt -s nullglob
+          workspaces=(ios/*.xcworkspace)
+          if [ "${#workspaces[@]}" -ne 1 ]; then
+            echo "::error::Expected one Expo-generated iOS workspace."
+            exit 1
+          fi
+          workspace=${workspaces[0]}
+          scheme=$(basename "$workspace" .xcworkspace)
           xcodebuild \
-            -workspace ios/GemmaChat.xcworkspace \
-            -scheme GemmaChat \
+            -workspace "$workspace" \
+            -scheme "$scheme" \
             -configuration Release \
             -sdk iphoneos \
             -destination 'generic/platform=iOS' \
@@ -92,13 +100,13 @@ jobs:
           test -f "$APP/main.jsbundle" || { echo "::error::JS 번들이 앱에 포함되지 않았습니다"; exit 1; }
           mkdir -p dist/Payload
           cp -R "$APP" dist/Payload/
-          (cd dist && zip -qry GemmaChat-unsigned.ipa Payload)
-          ls -lh dist/GemmaChat-unsigned.ipa
+          (cd dist && zip -qry MyBuddyOffline-unsigned.ipa Payload)
+          ls -lh dist/MyBuddyOffline-unsigned.ipa
 
       - uses: actions/upload-artifact@v6
         with:
-          name: GemmaChat-unsigned-ipa
-          path: dist/GemmaChat-unsigned.ipa
+          name: MyBuddyOffline-unsigned-ipa
+          path: dist/MyBuddyOffline-unsigned.ipa
           retention-days: 30
 
       - uses: actions/upload-artifact@v6
