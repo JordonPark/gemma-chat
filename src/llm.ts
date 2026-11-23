@@ -17,6 +17,7 @@ import {
 import { UNIT_IDS, contextForPrompt, todayLine, type ToolCall } from './tools';
 import { LANGUAGE_GUIDE, LANGUAGE_REMINDER, needsKoreanRetry, removeEchoes } from './languagePolicy';
 import type { PhotoAnnotations } from './photoAnnotate';
+import { PERFORMANCE_LEVELS, type PerformanceMode } from './performance';
 import { SOLVE_GUIDE, isSolveRequest } from './problemSolve';
 
 export type Role = 'user' | 'assistant';
@@ -60,6 +61,7 @@ function withOcr(question: string, ocr?: string) {
 }
 
 export type Settings = {
+  performanceMode?: PerformanceMode;
   systemPrompt: string;
   nCtx: number;
   maxNewTokens: number;
@@ -72,8 +74,8 @@ export type Settings = {
 export const DEFAULT_SETTINGS: Settings = {
   systemPrompt:
     '당신은 친절하고 정확한 AI 비서입니다. 사용자의 언어로 간결하게 답하세요. 모르는 것은 모른다고 말하세요.',
-  nCtx: 4096,
-  maxNewTokens: 1024,
+  nCtx: PERFORMANCE_LEVELS.balanced.nCtx,
+  maxNewTokens: PERFORMANCE_LEVELS.balanced.maxNewTokens,
   temperature: 1.0, // Gemma 3 권장값: temperature 1.0, top_k 64, top_p 0.95, min_p 0.0
   // iOS 는 Metal 이 안정적이므로 기본 사용. Android 는 Adreno(OpenCL) 기기에서만 켜는 것을 권장.
   useGpu: Platform.OS === 'ios',
@@ -128,11 +130,16 @@ export async function enableVision(mmprojPath: string, useGpu: boolean): Promise
   const c = ctx;
   if (!c) throw new Error('모델이 로드되지 않았습니다.');
   if (visionReady) return;
-  const ok = await c.initMultimodal({ path: mmprojPath, use_gpu: useGpu });
-  if (!ok) throw new Error('이미지 인식 파일을 불러오지 못했습니다.');
-  const support = await c.getMultimodalSupport();
-  if (!support.vision) throw new Error('이 모델 파일은 이미지 인식을 지원하지 않습니다.');
-  visionReady = true;
+  try {
+    const ok = await c.initMultimodal({ path: mmprojPath, use_gpu: useGpu });
+    if (!ok) throw new Error('이미지 인식 파일을 불러오지 못했습니다.');
+    const support = await c.getMultimodalSupport();
+    if (!support.vision) throw new Error('이 모델 파일은 이미지 인식을 지원하지 않습니다.');
+    visionReady = true;
+  } catch (error) {
+    await c.releaseMultimodal().catch(() => {});
+    throw error;
+  }
 }
 
 export async function disableVision() {
@@ -281,6 +288,8 @@ export async function generateReply(
   }
   if (res.interrupted) text = '답변 생성을 중단했습니다.';
   else text = removeEchoes(text); // "문장 (문장)" 처럼 같은 말을 괄호로 되풀이한 부분 정리
+  // 답변 검사는 글자만 사용하므로 사진 모델을 먼저 내려서 메모리를 비운다.
+  if (visionReady) await disableVision().catch((error) => console.warn('Could not release vision', error));
   if (!res.interrupted) await checkGeneratedContent(text, 'assistant reply');
   return {
     text,

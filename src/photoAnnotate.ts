@@ -5,6 +5,7 @@
  * 물체 인식 모듈이 없는 예전 앱 빌드에서는 글자만 표시한다.
  */
 import { detectObjects, isObjectDetectionAvailable, isOcrAvailable, recognizeText, type Box } from '../modules/expo-ocr';
+import { isMemoryConstrainedAndroid } from './deviceCheck';
 
 export type AnnotLine = { text: string; box: Box };
 export type AnnotObject = { label: string; score: number; box: Box };
@@ -17,11 +18,13 @@ export type PhotoAnnotations = {
 
 export type PhotoAnalysis = { text: string | null; annot: PhotoAnnotations | null };
 
-/** OCR + 물체 인식을 함께 돌린다. 실패한 쪽은 비워 둔다 */
-export async function analyzePhoto(uri: string): Promise<PhotoAnalysis> {
+/** 메모리 여유가 적은 Android에서는 OCR이 끝난 뒤 물체 인식을 시작한다. */
+export async function analyzePhoto(uri: string, includeObjects = true): Promise<PhotoAnalysis> {
+  const ocrJob = isOcrAvailable() ? recognizeText(uri).catch(() => null) : Promise.resolve(null);
+  if (includeObjects && isMemoryConstrainedAndroid()) await ocrJob;
   const [ocr, objs] = await Promise.all([
-    isOcrAvailable() ? recognizeText(uri).catch(() => null) : Promise.resolve(null),
-    isObjectDetectionAvailable() ? detectObjects(uri).catch(() => []) : Promise.resolve([]),
+    ocrJob,
+    includeObjects && isObjectDetectionAvailable() ? detectObjects(uri).catch(() => []) : Promise.resolve([]),
   ]);
   const lines = (ocr?.lines ?? []).filter((l) => l.text.trim()).map((l) => ({ text: l.text.trim(), box: l.box }));
   const objects = objs.map((o) => ({ label: koreanLabel(o.label), score: o.score, box: o.box }));

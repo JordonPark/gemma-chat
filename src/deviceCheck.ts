@@ -5,14 +5,30 @@
  */
 import { File, Paths } from 'expo-file-system';
 import { requireOptionalNativeModule } from 'expo-modules-core';
+import { Platform } from 'react-native';
 
 /** 6GB 기기는 보통 5.4~5.8GB 로 보고되고, 4GB 기기는 3.6~3.9GB 로 보고된다 */
 const MIN_MEMORY_BYTES = 5_000_000_000;
+export const ANDROID_COMPACT_MEMORY_BYTES = 8 * 1024 ** 3;
 
 export function deviceMemoryBytes(): number | null {
   try {
     const v = requireOptionalNativeModule<{ totalMemory?: number }>('ExpoDevice')?.totalMemory;
-    return typeof v === 'number' && v > 0 ? v : null;
+    return typeof v === 'number' && Number.isFinite(v) && v > 0 ? v : null;
+  } catch {
+    return null;
+  }
+}
+
+export function isMemoryConstrainedAndroid(): boolean {
+  if (Platform.OS !== 'android') return false;
+  const memory = deviceMemoryBytes();
+  return memory !== null && memory <= ANDROID_COMPACT_MEMORY_BYTES;
+}
+
+export function deviceModelName(): string | null {
+  try {
+    return requireOptionalNativeModule<{ modelName?: string }>('ExpoDevice')?.modelName?.trim() || null;
   } catch {
     return null;
   }

@@ -39,7 +39,9 @@ import { conversationName, hasConversationContent, makeConversation, removeTask,
 import { DuoToolbar, hasDuoToolbar } from './DuoToolbar';
 import { FoldAwareArea } from './FoldAwareArea';
 import { FadeIn, PressableScale, Segmented, TypingDots, smoothLayout } from './motion';
-import { markIdle, markStage } from './crashGuard';
+import { markStage } from './crashGuard';
+import { deviceMemoryBytes, deviceModelName, formatMemory, isMemoryConstrainedAndroid } from './deviceCheck';
+import { applyPerformanceMode, PERFORMANCE_LEVELS, PERFORMANCE_ORDER, recommendPerformance } from './performance';
 import { TypewriterMarkdown } from './Typewriter';
 import { LeftDrawer } from './LeftDrawer';
 import { AnnotatedPhoto } from './AnnotatedPhoto';
@@ -59,7 +61,7 @@ import { loadChatLibrary, saveChatLibrary } from './storage';
 import { colors } from './theme';
 import { describeVision, useVision, type VisionStatus } from './useVision';
 import { deleteImages, pickImage, type ImageSource } from './vision';
-import { isOcrAvailable, recognizeText } from '../modules/expo-ocr';
+import { isOcrAvailable } from '../modules/expo-ocr';
 
 const uid = () => `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
 // SwiftUI's navigation stack already lays out the hosted content inside its safe area.
@@ -107,13 +109,6 @@ const STYLE_PRESETS = [
   { label: '정확하게', temperature: 0.3, hint: '매번 비슷하고 차분한 답. 사실 확인·계산·공부에 알맞습니다.' },
   { label: '균형', temperature: 0.7, hint: '정확함과 자연스러움의 중간입니다.' },
   { label: '창의적으로', temperature: 1.0, hint: '표현이 다양하고 자유로운 답. 글쓰기·아이디어에 알맞습니다 (Gemma 권장 기본값).' },
-] as const;
-
-/** 설정의 "대화 길이": 대화 기억 길이(n_ctx)와 한 번에 답하는 최대 길이를 함께 정한다 */
-const LENGTH_PRESETS = [
-  { label: '적게', nCtx: 2048, maxNewTokens: 512, hint: '짧은 대화·짧은 답. 메모리를 가장 적게 쓰고 가장 빠릅니다.' },
-  { label: '중간', nCtx: 4096, maxNewTokens: 1024, hint: '보통 대화에 알맞습니다 (기본값).' },
-  { label: '많이', nCtx: 8192, maxNewTokens: 2048, hint: '긴 대화를 더 오래 기억하고 긴 답(풀이·글쓰기)도 끝까지 씁니다. 메모리를 더 쓰고 조금 느려질 수 있어요.' },
 ] as const;
 
 export function ChatScreen({ settings, initialInput = '', onChangeSettings }: Props) {
@@ -191,19 +186,19 @@ export function ChatScreen({ settings, initialInput = '', onChangeSettings }: Pr
     ocrJob.current = null;
   };
 
-  const readOcr = (uri: string) => isOcrAvailable() ? recognizeText(uri).then((r) => r.text).catch(() => null) : Promise.resolve(null);
-
-  /** 사진을 고르면 바로 OCR 을 돌려 둔다 (보통 1초 안팎) */
   /** 사진 분석(글자 위치 + 물건 위치). 사진마다 한 번만 돌리고 결과를 재사용한다 */
-  const annotJob = useRef<{ uri: string; job: Promise<PhotoAnalysis> } | null>(null);
+  const annotJob = useRef<{ uri: string; includeObjects: boolean; job: Promise<PhotoAnalysis> } | null>(null);
   const analysisFor = (uri: string) => {
-    if (annotJob.current?.uri !== uri) {
-      markStage('photo');
-      const job = analyzePhoto(uri);
-      job.finally(markIdle);
-      annotJob.current = { uri, job };
-    }
-    return annotJob.current.job;
+    const includeObjects = Platform.OS !== 'android' || settings.vision;
+    const previous = annotJob.current;
+    if (previous?.uri === uri && previous.includeObjects === includeObjects) return previous.job;
+    const available = isMemoryConstrainedAndroid() ? previous?.job.catch(() => null) : undefined;
+    const job = Promise.resolve(available).then(() => {
+      const endAnalysis = markStage('photo');
+      return analyzePhoto(uri, includeObjects).finally(endAnalysis);
+    });
+    annotJob.current = { uri, includeObjects, job };
+    return job;
   };
   const [translatingId, setTranslatingId] = useState<string | null>(null);
 
@@ -215,7 +210,7 @@ export function ChatScreen({ settings, initialInput = '', onChangeSettings }: Pr
       return;
     }
     setPendingOcr(undefined);
-    const job = analysisFor(uri).then((a) => a.text);
+    const job = analysisFor(uri).then((a) => a.text, () => null);
     ocrJob.current = job;
     job.then((t) => {
       if (ocrJob.current === job) setPendingOcr(t);
@@ -227,6 +222,7 @@ export function ChatScreen({ settings, initialInput = '', onChangeSettings }: Pr
     const idx = annot.lines.map((l, i) => (needsTranslation(l.text) ? i : -1)).filter((i) => i >= 0);
     if (!idx.length || workPending.current) return;
     workPending.current = true;
+    const endTranslation = markStage('generate-photo');
     setTranslatingId(msgId);
     try {
       const ko = await translateLines(idx.map((i) => annot.lines[i].text));
@@ -242,6 +238,7 @@ export function ChatScreen({ settings, initialInput = '', onChangeSettings }: Pr
     } catch (e) {
       console.warn('photo translation failed', e); // 번역이 안 되면 원문 위치만 보여 준다
     } finally {
+      endTranslation();
       workPending.current = false;
       setTranslatingId(null);
     }
@@ -284,8 +281,9 @@ export function ChatScreen({ settings, initialInput = '', onChangeSettings }: Pr
     workPending.current = true;
     setWorkingWithPhoto(true);
     const image = pendingImage;
-    const text = await (ocrJob.current ?? readOcr(image));
-    const annot = (await analysisFor(image).catch(() => null))?.annot ?? null;
+    const analysis = await analysisFor(image).catch(() => null);
+    const text = analysis?.text ?? null;
+    const annot = analysis?.annot;
     const readId = uid();
     clearPending();
     followLatest.current = true;
@@ -344,12 +342,14 @@ export function ChatScreen({ settings, initialInput = '', onChangeSettings }: Pr
     let answered = false;
     let replyStage = false;
     let visionLoaded = false;
+    let endStage: (() => void) | undefined;
     try {
       if (pendingImage) {
         setWorkingWithPhoto(true);
-        const ocr = await (ocrJob.current ?? readOcr(pendingImage));
+        const analysis = await analysisFor(pendingImage).catch(() => null);
+        const ocr = analysis?.text;
         if (ocr) userMsg.ocr = ocr;
-        const annot = (await analysisFor(pendingImage).catch(() => null))?.annot;
+        const annot = analysis?.annot;
         if (annot) userMsg.annot = annot;
         if (vision.status.kind !== 'ready' && !ocr && !vision.ensureReady()) return;
         setWorkingWithPhoto(false);
@@ -364,6 +364,8 @@ export function ChatScreen({ settings, initialInput = '', onChangeSettings }: Pr
       await activateKeepAwakeAsync('gen');
       keptAwake = true;
       await conversationCache.current;
+      const replyKind = userMsg.image ? 'generate-photo' : 'generate';
+      endStage = markStage(replyKind);
       // 안전 검사는 현재 대화의 최근 요청과 첨부 사진에서 읽은 글자를 함께 확인한다.
       const earlier = messages
         .filter((m) => m.role === 'user' && !m.blocked)
@@ -393,13 +395,14 @@ export function ChatScreen({ settings, initialInput = '', onChangeSettings }: Pr
       // 이미지 인식(약 1GB)은 사진을 보낼 때만 올리고, 답이 끝나면 내린다 (평소 대화의 메모리 절약)
       if (userMsg.image && vision.status.kind === 'ready') {
         setStreaming('이미지 인식을 준비하는 중…');
-        markStage('load-vision');
+        endStage();
+        endStage = markStage('load-vision');
         visionLoaded = await vision.load();
+        endStage();
+        endStage = markStage(replyKind);
         setStreaming('사진을 분석하는 중…');
       }
-      markStage('generate');
       const { text: reply, stats: st } = await generateReply(history, settings);
-      markIdle();
       // 사진 답은 "분석되었습니다." + 기기에서 찾은 물건·글자 요약으로 시작한다
       // 문제 풀이면 풀이 속 계산을 기기 계산기로 다시 확인해, 다른 곳이 있으면 아래에 알려 준다
       const solving = isSolveRequest(userMsg.content, !!userMsg.image);
@@ -435,8 +438,8 @@ export function ChatScreen({ settings, initialInput = '', onChangeSettings }: Pr
       }
     } finally {
       if (keptAwake) deactivateKeepAwake('gen');
-      markIdle();
-      if (visionLoaded) vision.unload();
+      if (visionLoaded) await vision.unload();
+      endStage?.();
       workPending.current = false;
       setWorkingWithPhoto(false);
       setStreaming(null);
@@ -900,6 +903,13 @@ function SettingsModal({
   onSave: (s: Settings) => void;
 }) {
   const [s, setS] = useState(settings);
+  const [device] = useState(() => ({ memory: deviceMemoryBytes(), model: deviceModelName() }));
+  const recommended = recommendPerformance(device.memory);
+  const automatic = s.performanceMode === 'auto';
+  const level = s.performanceMode === 'auto' ? recommended : s.performanceMode ?? PERFORMANCE_ORDER.find((candidate) => {
+    const profile = PERFORMANCE_LEVELS[candidate];
+    return s.nCtx === profile.nCtx && s.maxNewTokens === profile.maxNewTokens;
+  });
 
   return (
     <Modal
@@ -940,6 +950,30 @@ function SettingsModal({
         keyboardShouldPersistTaps="handled"
       >
 
+        <Text style={styles.label} accessibilityRole="header">성능</Text>
+        <View style={styles.switchRow}>
+          <View style={styles.flex}>
+            <Text style={styles.label}>자동 설정</Text>
+            <Text style={styles.hint}>
+              {device.model ? `${device.model} · ` : ''}RAM {formatMemory(device.memory)} · 추천 {PERFORMANCE_LEVELS[recommended].label}
+            </Text>
+          </View>
+          <Switch
+            accessibilityLabel="성능 자동 설정"
+            value={automatic}
+            onValueChange={(on) => setS((current) => applyPerformanceMode(current, on ? 'auto' : recommended))}
+          />
+        </View>
+        <Segmented
+          options={PERFORMANCE_ORDER.map((item) => PERFORMANCE_LEVELS[item].label)}
+          selected={level ? PERFORMANCE_ORDER.indexOf(level) : -1}
+          onSelect={(i) => setS((current) => applyPerformanceMode(current, PERFORMANCE_ORDER[i]))}
+        />
+        <Text style={styles.hint}>
+          {level ? PERFORMANCE_LEVELS[level].hint : `기존 설정을 사용 중이에요. 대화 문맥 ${s.nCtx} · 답변 최대 ${s.maxNewTokens} 토큰`}
+          {automatic ? ' 단계를 직접 고르면 수동으로 전환돼요.' : ''}
+        </Text>
+
         <Text style={styles.label}>말투</Text>
         <Segmented
           options={TONE_PRESETS.map((p) => p.label)}
@@ -948,17 +982,6 @@ function SettingsModal({
         />
         <Text style={styles.hint}>
           {TONE_PRESETS.find((p) => s.systemPrompt.trim() === p.prompt)?.hint ?? '직접 정한 말투를 쓰는 중입니다. 위에서 고르면 바뀝니다.'}
-        </Text>
-
-        <Text style={styles.label}>대화 길이</Text>
-        <Segmented
-          options={LENGTH_PRESETS.map((p) => p.label)}
-          selected={LENGTH_PRESETS.findIndex((p) => s.nCtx === p.nCtx && s.maxNewTokens === p.maxNewTokens)}
-          onSelect={(i) => setS({ ...s, nCtx: LENGTH_PRESETS[i].nCtx, maxNewTokens: LENGTH_PRESETS[i].maxNewTokens })}
-        />
-        <Text style={styles.hint}>
-          {(LENGTH_PRESETS.find((p) => p.nCtx === s.nCtx && p.maxNewTokens === s.maxNewTokens)?.hint ??
-            `직접 정한 값: 대화 기억 ${s.nCtx} · 답 최대 ${s.maxNewTokens} 토큰`) + ' 바꾸면 모델을 다시 불러옵니다.'}
         </Text>
 
         <Text style={styles.label}>답변 스타일</Text>
@@ -975,9 +998,12 @@ function SettingsModal({
         <View style={styles.switchRow}>
           <View style={styles.flex}>
             <Text style={styles.label}>GPU 가속 (변경 시 재로딩)</Text>
-            <Text style={styles.hint}>iOS: Metal / Android: Adreno OpenCL. 느려지거나 오류가 나면 끄세요.</Text>
+            <Text style={styles.hint}>
+              {automatic ? '수동 단계를 고르면 GPU 가속을 직접 바꿀 수 있어요.' : 'iOS는 Metal, 지원되는 Android는 Adreno OpenCL을 사용해요.'}
+            </Text>
           </View>
-          <Switch value={s.useGpu} onValueChange={(v) => setS({ ...s, useGpu: v })} />
+          <Switch accessibilityLabel="GPU 가속" value={s.useGpu} disabled={automatic}
+            onValueChange={(v) => setS((current) => ({ ...current, useGpu: v }))} />
         </View>
 
         <View style={styles.switchRow}>

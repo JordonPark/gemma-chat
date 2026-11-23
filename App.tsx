@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Alert, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Alert, Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 import { ChatScreen } from './src/ChatScreen';
@@ -9,9 +9,10 @@ import { LegalConsent } from './src/LegalInfo';
 import { LoadingScreen } from './src/LoadingScreen';
 import { SetupScreen } from './src/SetupScreen';
 import { removeLegacyImageModel } from './src/legacyDrawing';
-import { describeStage, markIdle, markStage, takeLastCrash } from './src/crashGuard';
+import { describeStage, markStage, takeLastCrash } from './src/crashGuard';
 import { acceptLowMemory, deviceMemoryBytes, formatMemory, shouldWarnLowMemory } from './src/deviceCheck';
 import { loadModel, unloadModel, type Settings } from './src/llm';
+import { applyPerformanceMode, LIGHT_CHAT_SETTINGS } from './src/performance';
 import { deleteInstalledModels, findInstalledModel, type InstalledModel } from './src/modelStore';
 import { acceptModelTerms, hasAcceptedModelTerms, loadSettings, saveSettings } from './src/storage';
 import { colors, isDark } from './src/theme';
@@ -27,10 +28,8 @@ type Phase =
 // 첫 실행 때 로딩 화면을 최소 이만큼은 보여 준다 (모델이 빨리 올라와도 화면이 깜빡이고 지나가지 않게)
 const MIN_SPLASH_MS = 2500;
 
-/** 메모리를 가장 적게 쓰는 설정 (갑자기 종료된 뒤 권함) */
-const LIGHT_SETTINGS = { nCtx: 2048, maxNewTokens: 512, useGpu: false } as const;
 const isLightSettings = (s: Settings) =>
-  s.nCtx <= LIGHT_SETTINGS.nCtx && s.maxNewTokens <= LIGHT_SETTINGS.maxNewTokens && !s.useGpu;
+  s.nCtx <= LIGHT_CHAT_SETTINGS.nCtx && s.maxNewTokens <= LIGHT_CHAT_SETTINGS.maxNewTokens && !s.useGpu;
 
 export default function App() {
   const [acceptedTerms, setAcceptedTerms] = useState(hasAcceptedModelTerms);
@@ -50,18 +49,19 @@ export default function App() {
   const startModel = useCallback(
     async (model: InstalledModel, s: Settings, initialInput = '') => {
       setPhase({ kind: 'loading', model, pct: 0 });
+      const endLoad = markStage('load-model');
       try {
-        markStage('load-model');
         const r = await loadModel(model.path, s, (pct) => setPhase({ kind: 'loading', model, pct }));
-        markIdle();
+        endLoad();
         const gpuInfo = r.gpu ? 'GPU' : s.useGpu ? `CPU (GPU 불가: ${r.reasonNoGPU || '미지원'})` : 'CPU';
         setPhase({ kind: 'loading', model, pct: 100 });
         await holdSplash();
         setPhase({ kind: 'ready', model, gpuInfo, initialInput });
       } catch (e: any) {
-        markIdle();
         firstLaunch.current = false;
         setPhase({ kind: 'error', model, message: String(e?.message ?? e) });
+      } finally {
+        endLoad();
       }
     },
     [holdSplash],
@@ -80,15 +80,40 @@ export default function App() {
       return;
     }
     const m = await findInstalledModel();
-    // 지난번에 작업 도중 앱이 꺼졌으면(대부분 메모리 부족) 가벼운 설정을 권한다
     let use = settings;
     const crashed = takeLastCrash();
-    if (m && crashed && !isLightSettings(settings)) {
+    if (m && crashed && Platform.OS === 'android') {
+      // 메모리 설정을 줄인 뒤에도 로딩이 중단됐으면 자동 재시작을 멈춘다.
+      if (crashed === 'load-model' && isLightSettings(settings)) {
+        await holdSplash();
+        setPhase({ kind: 'error', model: m, message: '이전 실행에서 모델을 불러오는 도중 앱이 종료됐습니다. 메모리를 확보한 뒤 다시 시도해 주세요.' });
+        return;
+      }
+      const photoInterrupted = crashed === 'load-vision' || crashed === 'photo' || crashed === 'generate-photo';
+      if (!isLightSettings(settings) || (photoInterrupted && settings.vision)) {
+        use = {
+          ...settings,
+          performanceMode: 'efficiency',
+          nCtx: Math.min(settings.nCtx, LIGHT_CHAT_SETTINGS.nCtx),
+          maxNewTokens: Math.min(settings.maxNewTokens, LIGHT_CHAT_SETTINGS.maxNewTokens),
+          useGpu: false,
+          vision: !photoInterrupted && settings.vision,
+        };
+        setSettings(use);
+        saveSettings(use);
+        await holdSplash();
+        Alert.alert(
+          '가벼운 설정으로 다시 시작했어요',
+          `지난번 ${describeStage(crashed)} 중 앱이 종료되었습니다. 성능을 효율로 설정하고 GPU 가속을 껐어요.` +
+            (photoInterrupted ? ' 사진은 글자 읽기로 처리하도록 바꿨어요.' : ''),
+        );
+      }
+    } else if (m && crashed && !isLightSettings(settings)) {
       const light = await new Promise<boolean>((resolve) =>
         Alert.alert(
           '앱이 갑자기 종료되었어요',
-          `지난번에 ${describeStage(crashed)} 중에 앱이 꺼졌습니다. 기기 메모리가 부족했을 가능성이 커요.\n\n` +
-            '대화 길이를 "적게"로, GPU 가속을 끄면 메모리를 덜 써서 더 안정적입니다. 바꿀까요? (설정에서 언제든 되돌릴 수 있어요)',
+          `지난번에 ${describeStage(crashed)} 중에 앱이 꺼졌습니다. 기기 메모리 부족이 원인일 수 있어요.\n\n` +
+            '성능을 효율로 바꾸면 대화 길이를 줄이고 GPU 가속을 꺼서 메모리를 덜 써요. 설정에서 다시 바꿀 수 있어요.',
           [
             { text: '그대로', style: 'cancel', onPress: () => resolve(false) },
             { text: '가볍게 쓰기', onPress: () => resolve(true) },
@@ -97,7 +122,7 @@ export default function App() {
         ),
       );
       if (light) {
-        use = { ...settings, ...LIGHT_SETTINGS };
+        use = applyPerformanceMode(settings, 'efficiency');
         setSettings(use);
         saveSettings(use);
       }
@@ -125,7 +150,7 @@ export default function App() {
     const needReload = s.nCtx !== settings.nCtx || s.useGpu !== settings.useGpu;
     setSettings(s);
     saveSettings(s);
-    if (needReload && (phase.kind === 'ready' || phase.kind === 'error')) startModel(phase.model, s);
+    if (phase.kind === 'error' || (phase.kind === 'ready' && needReload)) startModel(phase.model, s);
   };
 
   let body: React.ReactNode;
@@ -191,8 +216,8 @@ export default function App() {
           <Text style={[styles.text, { fontWeight: '700' }]}>모델을 불러오지 못했습니다</Text>
           <Text style={styles.muted}>{phase.message}</Text>
           <Text style={styles.muted}>메모리가 부족하면 GPU를 끄거나 컨텍스트 길이를 줄여 보세요.</Text>
-          <Pressable style={styles.btn} onPress={() => changeSettings({ ...settings, useGpu: false, nCtx: 2048 })}>
-            <Text style={styles.btnText}>CPU · n_ctx 2048 로 다시 시도</Text>
+          <Pressable style={styles.btn} onPress={() => changeSettings(applyPerformanceMode(settings, 'efficiency'))}>
+            <Text style={styles.btnText}>가벼운 설정으로 다시 시도</Text>
           </Pressable>
           <Pressable
             style={[styles.btn, { backgroundColor: colors.danger }]}

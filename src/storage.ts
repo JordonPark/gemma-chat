@@ -2,6 +2,7 @@
 import { File, Paths } from 'expo-file-system';
 import { makeConversation, type ChatLibraryData } from './conversationLibrary';
 import { DEFAULT_SETTINGS, type ChatMessage, type Settings } from './llm';
+import { applyPerformanceMode, PERFORMANCE_ORDER } from './performance';
 
 const settingsFile = () => new File(Paths.document, '.settings.json');
 const chatFile = () => new File(Paths.document, '.chat.json');
@@ -24,7 +25,21 @@ function writeJson(f: File, v: unknown) {
   }
 }
 
-export const loadSettings = (): Settings => ({ ...DEFAULT_SETTINGS, ...readJson(settingsFile(), {}) });
+export const loadSettings = (): Settings => {
+  const saved = readJson<Partial<Settings>>(settingsFile(), {}) ?? {};
+  const settings = { ...DEFAULT_SETTINGS, ...saved };
+  const mode = saved.performanceMode;
+  if (mode === 'auto') return applyPerformanceMode(settings, 'auto');
+  if (mode && PERFORMANCE_ORDER.some((level) => level === mode)) {
+    return { ...applyPerformanceMode(settings, mode), ...saved };
+  }
+
+  // Keep existing manual values when upgrading from a build without performance modes.
+  const hasCustomPerformance = settings.nCtx !== DEFAULT_SETTINGS.nCtx
+    || settings.maxNewTokens !== DEFAULT_SETTINGS.maxNewTokens
+    || settings.useGpu !== DEFAULT_SETTINGS.useGpu;
+  return hasCustomPerformance ? { ...settings, performanceMode: undefined } : applyPerformanceMode(settings, 'auto');
+};
 export const saveSettings = (s: Settings) => writeJson(settingsFile(), s);
 
 const libraryFile = () => new File(Paths.document, '.chat-library.json');
